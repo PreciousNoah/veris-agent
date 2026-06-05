@@ -27,7 +27,7 @@ try {
   console.warn('veris-credentials.json not found — run setup.js first');
 }
 
-const PROVIDER_SDK_KEY = credentials.sdkKey || process.env.CROO_SDK_KEY;
+const PROVIDER_SDK_KEY = process.env.CROO_API_KEY || credentials.sdkKey;
 const REQUESTER_SDK_KEY = process.env.CROO_REQUESTER_SDK_KEY;
 const STORE_SDK_KEY = process.env.CROO_STORE_SDK_KEY;
 const SERVICE_ID = credentials.serviceId;
@@ -76,13 +76,18 @@ async function handleOrder(provider, orderId) {
 }
 
 // Provider listener with auto-reconnect
-let reconnectAttempts = 0;
+const activeConnections = new Set();
 
 async function startProvider(sdkKey, label) {
   if (!sdkKey) {
     console.log(`No SDK key for ${label} — skipping`);
     return;
   }
+  if (activeConnections.has(sdkKey)) {
+    console.log(`${label} already connected — skipping duplicate`);
+    return;
+  }
+  activeConnections.add(sdkKey);
   try {
     console.log(`Starting ${label} provider...`);
     const provider = new AgentClient(config, sdkKey);
