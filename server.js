@@ -76,6 +76,8 @@ async function handleOrder(provider, orderId) {
 }
 
 // Provider listener with auto-reconnect
+let reconnectAttempts = 0;
+
 const activeConnections = new Set();
 
 async function startProvider(sdkKey, label) {
