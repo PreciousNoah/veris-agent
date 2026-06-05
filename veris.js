@@ -217,14 +217,10 @@ export function detectCategory(serviceDescription = '', agentName = '') {
 
 // ─── HELPERS ───
 async function webSearch(query) {
-  try {
-    const model = gemini.getGenerativeModel({ model: 'gemini-2.0-flash', tools: [{ googleSearch: {} }] });
-    const result = await model.generateContent(query);
-    return result.response.text();
-  } catch (err) {
-    console.warn('Gemini search failed, using Groq:', err.message);
-    return await groqSynthesize(query);
-  }
+  return await groqSynthesize(
+    `Research the following and provide specific, detailed findings:\n\n${query}\n\nBe specific. Include any relevant data points, names, dates, or metrics you know about this topic.`,
+    'You are a Web3 research analyst with deep knowledge of DeFi protocols, crypto projects, and blockchain ecosystems. Provide factual, specific information.'
+  );
 }
 
 async function groqSynthesize(prompt, systemMsg = 'You are a factual research assistant. Be specific and concise.') {
