@@ -139,7 +139,7 @@ setInterval(async () => {
   } catch (e) { console.log('Keep-alive failed:', e.message); }
 }, 14 * 60 * 1000);
 
-cconst PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`VERIS backend running on port ${PORT}`);
   await startProvider(PROVIDER_SDK_KEY, 'VERIS Provider');
