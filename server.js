@@ -143,10 +143,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`VERIS backend running on port ${PORT}`);
   await startProvider(PROVIDER_SDK_KEY, 'VERIS Provider');
-  
-  // Agent Store listener with separate key
-  if (process.env.CROO_STORE_SDK_KEY && 
-      process.env.CROO_STORE_SDK_KEY !== PROVIDER_SDK_KEY) {
-    await startProvider(process.env.CROO_STORE_SDK_KEY, 'Agent Store');
+  if (STORE_SDK_KEY && STORE_SDK_KEY !== PROVIDER_SDK_KEY) {
+    await startProvider(STORE_SDK_KEY, 'Agent Store');
   }
 });
