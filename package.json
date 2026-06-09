@@ -8,6 +8,7 @@
   "dependencies": {
     "@croo-network/sdk": "^0.2.1",
     "@google/generative-ai": "^0.24.1",
+    "@tavily/core": "^0.7.5",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
