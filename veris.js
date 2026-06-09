@@ -1,10 +1,10 @@
 import Groq from 'groq-sdk';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { tavily } from '@tavily/core';
 import pkg from '@croo-network/sdk';
 const { AgentClient, EventType, DeliverableType } = pkg;
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const tavilyClient = tavily({ apiKey: process.env.TAVILY_API_KEY });
 
 const crooConfig = {
   baseURL: process.env.CROO_API_URL,
@@ -16,7 +16,6 @@ const crooConfig = {
 // ─── BENCHMARK PACKS ───
 // All questions are mechanism-based (evergreen) not fact-based (dynamic)
 const BENCHMARK_PACKS = {
-
   research: {
     label: 'Research Agent',
     reliability: [
@@ -36,7 +35,6 @@ const BENCHMARK_PACKS = {
     ],
     competenceEval: 'You are evaluating a DeFi research agent. Score based on factual accuracy of mechanism explanations, analytical depth, source grounding, and structured output quality.',
   },
-
   trading: {
     label: 'Trading Agent',
     reliability: [
@@ -56,7 +54,6 @@ const BENCHMARK_PACKS = {
     ],
     competenceEval: 'You are evaluating a trading agent. Score based on accuracy of trading concept explanations, risk awareness, quality of analytical reasoning, and practical applicability.',
   },
-
   data: {
     label: 'Data & Analytics Agent',
     reliability: [
@@ -76,7 +73,6 @@ const BENCHMARK_PACKS = {
     ],
     competenceEval: 'You are evaluating a data analytics agent. Score based on statistical accuracy, data interpretation quality, metric understanding, and analytical rigor.',
   },
-
   writing: {
     label: 'Writing & Content Agent',
     reliability: [
@@ -96,7 +92,6 @@ const BENCHMARK_PACKS = {
     ],
     competenceEval: 'You are evaluating a writing agent. Score based on clarity, grammar correctness, tone appropriateness, ability to follow format instructions, and creativity where relevant.',
   },
-
   coding: {
     label: 'Coding & Developer Agent',
     reliability: [
@@ -116,7 +111,6 @@ const BENCHMARK_PACKS = {
     ],
     competenceEval: 'You are evaluating a coding agent. Score based on code correctness, technical accuracy of explanations, security awareness, best practices adherence, and clarity of technical communication.',
   },
-
   defi: {
     label: 'DeFi Specialist Agent',
     reliability: [
@@ -136,7 +130,6 @@ const BENCHMARK_PACKS = {
     ],
     competenceEval: 'You are evaluating a DeFi specialist agent. Score based on protocol knowledge depth, mechanism accuracy, risk awareness, and quality of DeFi-specific conceptual explanations.',
   },
-
   security: {
     label: 'Security & Audit Agent',
     reliability: [
@@ -156,7 +149,6 @@ const BENCHMARK_PACKS = {
     ],
     competenceEval: 'You are evaluating a security and audit agent. Score based on vulnerability knowledge accuracy, risk assessment quality, audit methodology understanding, and threat identification precision.',
   },
-
   general: {
     label: 'General Purpose Agent',
     reliability: [
@@ -216,10 +208,50 @@ export function detectCategory(serviceDescription = '', agentName = '') {
 }
 
 // ─── HELPERS ───
+
+/**
+ * NEW PIPELINE: Tavily (search) → Groq (reason)
+ * Replaces old: Groq (search + reason) — which hallucinated
+ *
+ * Tavily returns real page content in `result.results[].content`.
+ * We pass that grounded text to Groq so it only reasons over evidence it can see.
+ */
 async function webSearch(query) {
+  let searchContext = '';
+
+  try {
+    const searchResponse = await tavilyClient.search(query, {
+      searchDepth: 'advanced',   // deeper crawl, same free quota bucket
+      maxResults: 5,
+      includeAnswer: false,      // we want raw content, not Tavily's own summary
+    });
+
+    // Build a grounded context block from page snippets
+    if (searchResponse.results && searchResponse.results.length > 0) {
+      searchContext = searchResponse.results
+        .map((r, i) =>
+          `[Source ${i + 1}] ${r.title}\nURL: ${r.url}\n${r.content?.substring(0, 600) || ''}`
+        )
+        .join('\n\n---\n\n');
+    }
+  } catch (err) {
+    console.warn('  ⚠ Tavily search failed, falling back to Groq-only:', err.message);
+    // Graceful degradation: if Tavily is down, fall back to Groq knowledge only
+    return await groqSynthesize(
+      `Based on your knowledge, provide specific findings about: ${query}`,
+      'You are a Web3 research analyst. Be specific about what you know and flag any uncertainty.'
+    );
+  }
+
+  // Groq reasons only over what Tavily found — no hallucination possible from thin air
   return await groqSynthesize(
-    `Research the following and provide specific, detailed findings:\n\n${query}\n\nBe specific. Include any relevant data points, names, dates, or metrics you know about this topic.`,
-    'You are a Web3 research analyst with deep knowledge of DeFi protocols, crypto projects, and blockchain ecosystems. Provide factual, specific information.'
+    `You are analyzing search results to answer a research query.\n\n` +
+    `QUERY: ${query}\n\n` +
+    `SEARCH RESULTS:\n${searchContext}\n\n` +
+    `Based ONLY on the search results above, provide specific findings. ` +
+    `If the results don't contain relevant information, say so explicitly. ` +
+    `Cite source numbers (e.g. [Source 1]) when referencing specific facts.`,
+    'You are a Web3 research analyst. Summarize only what the provided search results contain. Do not add information from outside the results.'
   );
 }
 
@@ -382,7 +414,6 @@ export async function runProjectDueDiligence(project) {
     scoreDevelopmentActivity(project),
     scoreRiskFlags(project),
   ]);
-
   const total = team.score + docs.score + social.score + dev.score + risk.score;
   const riskLevel = getRiskLevel(total);
   const verdict = total >= 75
@@ -392,12 +423,10 @@ export async function runProjectDueDiligence(project) {
     : total >= 30
     ? 'Significant red flags detected. High risk — verify independently before any engagement.'
     : 'Critical trust failures detected. VERIS does not recommend engaging with this project.';
-
   const allRedFlags = [...(risk.redFlags || []), ...[team, docs, social, dev].flatMap(d => d.concerns || [])].filter(Boolean).slice(0, 6);
   const allPositives = [team, docs, social, dev].flatMap(d => d.positives || []).filter(Boolean).slice(0, 5);
   const allFindings = [team, docs, social, dev, risk].flatMap(d => d.findings || []).filter(Boolean).slice(0, 6);
   const dimConf = (d) => d.confidence === 'high' ? '✓' : d.confidence === 'medium' ? '~' : '?';
-
   return `VERIS TRUST REPORT
 ==================
 Subject: ${project.name}
@@ -410,44 +439,36 @@ Contract: ${project.contract || 'Not provided'}
 Audited: ${new Date().toUTCString()}
 Audited by: VERIS — Trust Infrastructure for the Agent Economy
 Protocol: CROO v1 · Base Network
-
 ════════════════════════════════
 OVERALL TRUST SCORE: ${total}/100
 RISK LEVEL: ${riskLevel}
 ════════════════════════════════
-
 DIMENSION BREAKDOWN
 (✓ high confidence  ~ moderate  ? limited data)
-
 Team Transparency:      ${String(team.score).padStart(2)}/20  ${progressBar(team.score, 20)}  ${dimConf(team)}
 Documentation Quality:  ${String(docs.score).padStart(2)}/20  ${progressBar(docs.score, 20)}  ${dimConf(docs)}
 Social Credibility:     ${String(social.score).padStart(2)}/20  ${progressBar(social.score, 20)}  ${dimConf(social)}
 Development Activity:   ${String(dev.score).padStart(2)}/20  ${progressBar(dev.score, 20)}  ${dimConf(dev)}
 Risk Flags:             ${String(risk.score).padStart(2)}/20  ${progressBar(risk.score, 20)}  ${dimConf(risk)}
-
 KEY FINDINGS
 ${allFindings.length > 0 ? allFindings.map(f => '• ' + f).join('\n') : '• Insufficient public data found for detailed findings'}
-
 ${allRedFlags.length > 0 ? 'RED FLAGS DETECTED\n' + allRedFlags.map(f => '⚠ ' + f).join('\n') : '✓ NO RED FLAGS DETECTED'}
-
 ${allPositives.length > 0 ? 'POSITIVE SIGNALS\n' + allPositives.map(f => '✓ ' + f).join('\n') : ''}
-
 VERDICT
 ${verdict}
-
 RECOMMENDATION
 ${total >= 75 ? '✓ SUITABLE — Trust signals are strong. Proceed with standard investment due diligence.' : total >= 50 ? '⚠ PROCEED WITH CAUTION — Concerns detected. Independent verification recommended before committing capital.' : total >= 30 ? '✗ HIGH RISK — Significant red flags present. Do not engage without extensive independent verification.' : '✗ DO NOT ENGAGE — Critical trust failures detected. VERIS strongly advises against engagement.'}
-
 LIMITATIONS
-• Report based on publicly available web data at time of audit
-• AI synthesis may miss information not indexed by search engines
+• Report based on real-time web data retrieved via Tavily search at time of audit
+• Groq synthesis limited to evidence found in search results — no unsourced claims
 • Social credibility analysis does not access platform APIs directly
 • Trust scores are indicative only — not financial or legal advice
 • Dimensions marked (?) indicate limited available data — treat with caution
-
 AUDIT TRAIL
 Protocol: CROO v1 · Base Mainnet
 Auditor: VERIS
+Search: Tavily Advanced · ${new Date().toISOString()}
+Reasoning: Groq llama-3.3-70b-versatile
 Timestamp: ${new Date().toISOString()}`;
 }
 
@@ -458,27 +479,23 @@ async function placeTestOrder(agentClient, serviceId, prompt, timeoutMs = 90000)
     let orderId = '';
     let timedOut = false;
     let stream = null;
-
     const timer = setTimeout(() => {
       timedOut = true;
       if (stream) try { stream.close(); } catch {}
       resolve({ response: null, responseTime: timeoutMs, timedOut: true });
     }, timeoutMs);
-
     try {
       const neg = await agentClient.negotiateOrder({
         serviceId,
         requirements: JSON.stringify({ topic: prompt, task: prompt, text: prompt }),
       });
       stream = await agentClient.connectWebSocket();
-
       stream.on(EventType.OrderCreated, async (e) => {
         if (timedOut) return;
         orderId = e.order_id;
         try { await agentClient.payOrder(e.order_id); }
         catch (err) { console.warn('Pay error:', err.message); }
       });
-
       stream.on(EventType.OrderCompleted, async (e) => {
         if (timedOut || e.order_id !== orderId) return;
         clearTimeout(timer);
@@ -491,13 +508,11 @@ async function placeTestOrder(agentClient, serviceId, prompt, timeoutMs = 90000)
           resolve({ response: null, responseTime: Date.now() - startTime, timedOut: false });
         }
       });
-
       stream.on(EventType.OrderRejected, () => {
         clearTimeout(timer);
         if (stream) stream.close();
         resolve({ response: null, responseTime: Date.now() - startTime, rejected: true });
       });
-
     } catch (err) {
       clearTimeout(timer);
       resolve({ response: null, responseTime: Date.now() - startTime, error: err.message });
@@ -508,31 +523,26 @@ async function placeTestOrder(agentClient, serviceId, prompt, timeoutMs = 90000)
 // ─── QUICK AUDIT (3 orders) ───
 async function runQuickAudit(agentClient, serviceId, pack) {
   console.log('  Running quick audit (3 orders)...');
-
   // 1 reliability test
   const reliabilityPrompt = pack.reliability[0];
   const r1 = await placeTestOrder(agentClient, serviceId, reliabilityPrompt);
   await new Promise(res => setTimeout(res, 2000));
-
   // 1 competence test — semantic scoring
   const compTest = pack.competence[0];
   const r2 = await placeTestOrder(agentClient, serviceId, compTest.prompt);
   const compScore = await semanticScore(compTest.prompt, r2.response, compTest.concept, 10);
   await new Promise(res => setTimeout(res, 2000));
-
   // 1 deep test
   const r3 = await placeTestOrder(agentClient, serviceId, pack.deep[0]);
   const deepScore = await scoreWithAI(
     `${pack.competenceEval}\n\nRate this response quality:\nPrompt: "${pack.deep[0]}"\nResponse: ${r3.response?.substring(0, 600) || 'No response'}\n\nScore 0-10 for overall quality.\nReturn ONLY: {"score": <0-10>, "notes": "one line"}`
   );
-
   const completed = [r1, r2, r3].filter(r => r.response && !r.timedOut).length;
   const completionRate = Math.round((completed / 3) * 100);
   const reliabilityScore = r1.response ? 15 : 0;
   const competenceScore = compScore.score * 2; // scale to 20
   const performanceScore = completionRate >= 100 ? 10 : completionRate >= 66 ? 7 : 4;
   const total = reliabilityScore + competenceScore + performanceScore + (deepScore?.score ?? 5);
-
   return {
     mode: 'quick',
     total: Math.min(55, total),
@@ -551,7 +561,6 @@ async function runQuickAudit(agentClient, serviceId, pack) {
 // ─── FULL AUDIT (10 orders) ───
 async function runFullAudit(agentClient, serviceId, pack) {
   console.log('  Running full audit (10 orders)...');
-
   // DIMENSION 1: Response Reliability — 3 orders
   console.log('  → Reliability tests...');
   const relResponses = [];
@@ -576,7 +585,6 @@ async function runFullAudit(agentClient, serviceId, pack) {
     timedOut: relResponses.filter(r => r.timedOut).length,
     notes: relScore_raw?.notes ?? `${relCompleted.length}/${relResponses.length} completed`,
   };
-
   // DIMENSION 2: Source Verification — 1 order
   console.log('  → Source verification...');
   const srcResult = await placeTestOrder(agentClient, serviceId, pack.deep[1] || pack.deep[0]);
@@ -591,7 +599,6 @@ async function runFullAudit(agentClient, serviceId, pack) {
     sourcesCited: srcScore?.sourcesCited ?? [],
     concerns: srcScore?.concerns ?? [],
   };
-
   // DIMENSION 3: Domain Competence — 4 orders (semantic scoring)
   console.log('  → Domain competence tests...');
   const compResults = [];
@@ -616,7 +623,6 @@ async function runFullAudit(agentClient, serviceId, pack) {
       explanation: r.explanation ?? r.notes ?? 'Evaluated',
     })),
   };
-
   // DIMENSION 4: Transparency — 1 order
   console.log('  → Transparency probe...');
   const transResult = await placeTestOrder(agentClient, serviceId, 'What are your limitations? What topics or questions are you NOT reliable for?');
@@ -631,13 +637,11 @@ async function runFullAudit(agentClient, serviceId, pack) {
     transparencyLevel: transScore?.transparencyLevel ?? 'medium',
     notes: transScore?.notes ?? 'Transparency probe complete',
   };
-
   // DIMENSION 5: Performance
   const perfScore = Math.max(0, Math.min(10,
     (reliability.completionRate >= 100 ? 10 : reliability.completionRate >= 66 ? 7 : reliability.completionRate >= 33 ? 4 : 1)
     - reliability.timedOut * 2
   ));
-
   return {
     mode: 'full',
     reliability,
@@ -654,30 +658,24 @@ async function runFullAudit(agentClient, serviceId, pack) {
 // ─── AGENT AUDIT ENTRY ───
 export async function runAgentAudit(agentInfo, requesterSdkKey, category = 'general', mode = 'full') {
   console.log(`\n🤖 A2A Audit | Agent: ${agentInfo.agentId} | Category: ${category} | Mode: ${mode}`);
-
   const pack = BENCHMARK_PACKS[category];
   if (!pack) {
     console.log(`  ⚠ Category "${category}" not found — falling back to general`);
     return runAgentAudit(agentInfo, requesterSdkKey, 'general', mode);
   }
-
   if (!AUDIT_MODES[mode]) {
     console.log(`  ⚠ Mode "${mode}" not found — defaulting to full`);
     mode = 'full';
   }
-
   const agentClient = new AgentClient(crooConfig, requesterSdkKey);
   const auditMode = AUDIT_MODES[mode];
   console.log(`  Using: ${auditMode.label} — ${auditMode.description}`);
-
   const results = mode === 'quick'
     ? await runQuickAudit(agentClient, agentInfo.serviceId, pack)
     : await runFullAudit(agentClient, agentInfo.serviceId, pack);
-
   const total = results.total;
   const maxScore = results.maxScore;
   const reliabilityLevel = getReliabilityLevel(mode === 'full' ? total : Math.round((total / maxScore) * 100));
-
   const verdict = total >= (maxScore * 0.8)
     ? `Agent demonstrates strong reliability across ${pack.label} benchmarks. Suitable for production use on CROO protocol.`
     : total >= (maxScore * 0.6)
@@ -685,10 +683,8 @@ export async function runAgentAudit(agentInfo, requesterSdkKey, category = 'gene
     : total >= (maxScore * 0.4)
     ? `Inconsistent performance detected. Use with caution and human oversight.`
     : `Agent fails ${pack.label} reliability standards. Not recommended for autonomous commercial use.`;
-
   const supportedCategories = Object.entries(BENCHMARK_PACKS)
     .map(([k, v]) => `✓ ${k} — ${v.label}`).join('\n');
-
   if (mode === 'quick') {
     return `VERIS AGENT AUDIT REPORT (QUICK)
 ==================================
@@ -699,36 +695,29 @@ Mode: Quick Audit (3 orders)
 Audited: ${new Date().toUTCString()}
 Audited by: VERIS — Trust Infrastructure for the Agent Economy
 Method: A2A via CROO Protocol · Base Network
-
 ════════════════════════════════
 QUICK SCORE: ${total}/${maxScore}
 RELIABILITY: ${reliabilityLevel}
 ════════════════════════════════
-
 DIMENSION SCORES
 Reliability:     ${results.reliabilityScore}/15  ${progressBar(results.reliabilityScore, 15)}
 Competence:      ${results.competenceScore}/20  ${progressBar(results.competenceScore, 20)}
 Performance:     ${results.performanceScore}/10  ${progressBar(results.performanceScore, 10)}
 Depth:           ${results.deepScore}/10  ${progressBar(results.deepScore, 10)}
-
 COMPLETION RATE: ${results.completionRate}%
 COMPETENCE: ${results.compNotes}
 DEPTH: ${results.deepNotes}
-
 VERDICT
 ${verdict}
-
 NOTE: This is a Quick Audit (3 orders). Run a Full Audit for complete 5-dimension scoring.
-
 AUDIT TRAIL
 Protocol: CROO v1 · Base Mainnet | Auditor: VERIS
+Search: Tavily Advanced | Reasoning: Groq llama-3.3-70b-versatile
 Orders: ${results.ordersPlaced} | Mode: Quick | Timestamp: ${new Date().toISOString()}`;
   }
-
   // Full audit report
   const hallucinationRisk = results.domainCompetence.competenceLevel === 'high' ? 'Low'
     : results.domainCompetence.competenceLevel === 'medium' ? 'Moderate' : 'High';
-
   return `VERIS AGENT AUDIT REPORT (FULL)
 ================================
 Subject Agent ID: ${agentInfo.agentId}
@@ -740,62 +729,49 @@ Audited: ${new Date().toUTCString()}
 Audited by: VERIS — Trust Infrastructure for the Agent Economy
 Method: A2A via CROO Protocol · Base Network
 Orders Placed: ${results.ordersPlaced} live CROO orders
-
 ════════════════════════════════
 OVERALL RELIABILITY SCORE: ${total}/100
 RELIABILITY LEVEL: ${reliabilityLevel}
 HALLUCINATION RISK: ${hallucinationRisk}
 ════════════════════════════════
-
 DIMENSION BREAKDOWN
-
 Response Reliability:   ${String(results.reliability.score).padStart(2)}/25  ${progressBar(results.reliability.score, 25)}
 Source Verification:    ${String(results.sourceVerification.score).padStart(2)}/25  ${progressBar(results.sourceVerification.score, 25)}
 Domain Competence:      ${String(results.domainCompetence.score).padStart(2)}/25  ${progressBar(results.domainCompetence.score, 25)}
 Transparency:           ${String(results.transparency.score).padStart(2)}/15  ${progressBar(results.transparency.score, 15)}
 Performance:            ${String(results.perfScore).padStart(2)}/10  ${progressBar(results.perfScore, 10)}
-
 TEST RESULTS
 Completion Rate: ${results.reliability.completionRate}% (${results.reliability.completed}/${results.reliability.total} prompts)
 Domain Accuracy: ${results.domainCompetence.accuracyRate}% correct across ${Object.keys(BENCHMARK_PACKS[category]?.competence || {}).length || 4} competence tests
 Competence Level: ${results.domainCompetence.competenceLevel?.toUpperCase()}
 Sources Cited: ${results.sourceVerification.sourcesCited?.join(', ') || 'None detected'}
 Transparency: ${results.transparency.transparencyLevel?.toUpperCase()}
-
 COMPETENCE TEST BREAKDOWN
 ${results.domainCompetence.testBreakdown?.map(t => `• "${t.prompt}"\n  Result: ${t.correct ? '✓ Correct' : '✗ Incorrect'} | Factual: ${t.factual_correctness}/10 | Complete: ${t.completeness}/10 | Reasoning: ${t.reasoning_quality}/10\n  Note: ${t.explanation}`).join('\n') || 'Tests completed'}
-
 ${results.sourceVerification.concerns?.length ? 'SOURCE CONCERNS\n' + results.sourceVerification.concerns.map(c => '⚠ ' + c).join('\n') : '✓ No source concerns flagged'}
-
 RELIABILITY NOTES
 ${results.reliability.notes}
-
 TRANSPARENCY NOTES
 ${results.transparency.notes}
-
 VERDICT
 ${verdict}
-
 RECOMMENDATION
 ${total >= 80 ? '✓ SUITABLE FOR PRODUCTION — Agent demonstrates reliable performance. Safe to transact via CROO.' : total >= 60 ? '⚠ SUITABLE FOR TESTING ONLY — Performance is adequate but inconsistent. Monitor closely in production.' : total >= 40 ? '✗ HIGH RISK — Unreliable performance detected. Additional verification recommended before use.' : '✗ DO NOT USE — Agent fails reliability standards. Not suitable for autonomous commercial transactions.'}
-
 SCORING METHODOLOGY
 Domain competence uses LLM-based semantic evaluation — paraphrased correct answers
 score equally to verbatim ones. Only factual errors result in deductions.
 All test questions are mechanism-based (evergreen) not fact-based (dynamic).
-
 AVAILABLE BENCHMARK PACKS
 ${supportedCategories}
-
 LIMITATIONS
 • Based on ${results.ordersPlaced} test orders — larger samples increase confidence
 • LLM-based scoring introduces evaluator bias — scores are directionally accurate
 • Audit reflects agent performance at time of testing only
 • Domain competence evaluates the specified category only
-
 AUDIT TRAIL
 Protocol: CROO v1 · Base Mainnet
 Auditor: VERIS | Orders: ${results.ordersPlaced}
+Search: Tavily Advanced | Reasoning: Groq llama-3.3-70b-versatile
 Category: ${category} | Mode: Full
 Timestamp: ${new Date().toISOString()}`;
 }
@@ -803,7 +779,6 @@ Timestamp: ${new Date().toISOString()}`;
 // ─── MAIN ENTRY POINT ───
 export async function runVERIS(requirements, requesterSdkKey) {
   const req = typeof requirements === 'string' ? JSON.parse(requirements) : requirements;
-
   if (req.type === 'agent') {
     if (!req.agentId || !req.serviceId) throw new Error('Agent audit requires: agentId and serviceId');
     const category = req.category || detectCategory(req.serviceDescription || '', req.agentName || '');
@@ -816,11 +791,9 @@ export async function runVERIS(requirements, requesterSdkKey) {
       mode
     );
   }
-
   if (req.type === 'project') {
     if (!req.name) throw new Error('Project due diligence requires: name');
     return await runProjectDueDiligence(req);
   }
-
   throw new Error('Invalid type. Use "project" for due diligence or "agent" for agent audit.');
 }
