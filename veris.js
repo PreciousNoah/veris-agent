@@ -1,7 +1,7 @@
 import Groq from 'groq-sdk';
 import { tavily } from '@tavily/core';
 import pkg from '@croo-network/sdk';
-const { AgentClient, EventType, DeliverableType } = pkg;
+const { AgentClient, EventType } = pkg;
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const tavilyClient = tavily({ apiKey: process.env.TAVILY_API_KEY });
@@ -13,8 +13,56 @@ const crooConfig = {
   logger: { debug: () => {}, info: console.log, warn: console.warn, error: console.error },
 };
 
-// ─── BENCHMARK PACKS ───
-// All questions are mechanism-based (evergreen) not fact-based (dynamic)
+// ─── ENTITY TYPE DETECTION ───
+// Different project archetypes need different scoring rubrics
+const ENTITY_TYPES = {
+  infrastructure: {
+    label: 'Infrastructure Protocol',
+    signals: ['foundation', 'protocol', 'layer', 'network', 'ledger', 'chain', 'xrp', 'bitcoin', 'ethereum', 'cosmos', 'polkadot', 'avalanche', 'solana'],
+    weights: { team: 0.8, docs: 1.4, social: 0.8, dev: 1.6, risk: 1.4 },
+    note: 'Infrastructure protocols often have distributed governance and no traditional startup team page. Scoring weighted toward development activity and documentation.',
+  },
+  memecoin: {
+    label: 'Meme Coin / Token',
+    signals: ['meme', 'doge', 'shib', 'pepe', 'inu', 'elon', 'moon', 'safe', 'cum', 'chad'],
+    weights: { team: 1.4, docs: 0.8, social: 1.4, dev: 1.0, risk: 1.4 },
+    note: 'Meme coins scored with extra weight on team identity and risk signals.',
+  },
+  aiagent: {
+    label: 'AI Agent / Product',
+    signals: ['ai agent', 'agent', 'gpt', 'llm', 'autonomous', 'bot', 'assistant', 'autopilot'],
+    weights: { team: 1.2, docs: 1.2, social: 1.0, dev: 1.2, risk: 1.4 },
+    note: 'AI agents scored with attention to team credibility and technical documentation.',
+  },
+  defi: {
+    label: 'DeFi Protocol',
+    signals: ['defi', 'yield', 'lending', 'borrow', 'swap', 'amm', 'pool', 'vault', 'liquid staking'],
+    weights: { team: 1.1, docs: 1.1, social: 1.0, dev: 1.2, risk: 1.6 },
+    note: 'DeFi protocols scored with strong weight on risk signals and smart contract audit status.',
+  },
+  general: {
+    label: 'General Project',
+    signals: [],
+    weights: { team: 1.0, docs: 1.0, social: 1.0, dev: 1.0, risk: 1.0 },
+    note: 'General rubric applied.',
+  },
+};
+
+export function detectEntityType(project) {
+  const text = (
+    (project.name || '') + ' ' +
+    (project.description || '') + ' ' +
+    (project.website || '')
+  ).toLowerCase();
+
+  for (const [type, config] of Object.entries(ENTITY_TYPES)) {
+    if (type === 'general') continue;
+    if (config.signals.some(s => text.includes(s))) return type;
+  }
+  return 'general';
+}
+
+// ─── BENCHMARK PACKS (agent audit — unchanged) ───
 const BENCHMARK_PACKS = {
   research: {
     label: 'Research Agent',
@@ -170,7 +218,6 @@ const BENCHMARK_PACKS = {
   },
 };
 
-// ─── AUDIT MODES ───
 const AUDIT_MODES = {
   quick: {
     label: 'Quick Audit',
@@ -186,7 +233,6 @@ const AUDIT_MODES = {
   },
 };
 
-// ─── AUTO CATEGORY DETECTOR ───
 export function detectCategory(serviceDescription = '', agentName = '') {
   const text = (serviceDescription + ' ' + agentName).toLowerCase();
   const signals = {
@@ -207,27 +253,21 @@ export function detectCategory(serviceDescription = '', agentName = '') {
   return bestMatch;
 }
 
-// ─── HELPERS ───
+// ─── CORE HELPERS ───
 
-/**
- * NEW PIPELINE: Tavily (search) → Groq (reason)
- * Replaces old: Groq (search + reason) — which hallucinated
- *
- * Tavily returns real page content in `result.results[].content`.
- * We pass that grounded text to Groq so it only reasons over evidence it can see.
- */
 async function webSearch(query) {
   let searchContext = '';
+  let sourceCount = 0;
 
   try {
     const searchResponse = await tavilyClient.search(query, {
-      searchDepth: 'advanced',   // deeper crawl, same free quota bucket
+      searchDepth: 'advanced',
       maxResults: 5,
-      includeAnswer: false,      // we want raw content, not Tavily's own summary
+      includeAnswer: false,
     });
 
-    // Build a grounded context block from page snippets
     if (searchResponse.results && searchResponse.results.length > 0) {
+      sourceCount = searchResponse.results.length;
       searchContext = searchResponse.results
         .map((r, i) =>
           `[Source ${i + 1}] ${r.title}\nURL: ${r.url}\n${r.content?.substring(0, 600) || ''}`
@@ -236,23 +276,33 @@ async function webSearch(query) {
     }
   } catch (err) {
     console.warn('  ⚠ Tavily search failed, falling back to Groq-only:', err.message);
-    // Graceful degradation: if Tavily is down, fall back to Groq knowledge only
-    return await groqSynthesize(
-      `Based on your knowledge, provide specific findings about: ${query}`,
-      'You are a Web3 research analyst. Be specific about what you know and flag any uncertainty.'
-    );
+    return {
+      text: await groqSynthesize(
+        `Based on your knowledge, provide specific findings about: ${query}`,
+        'You are a Web3 research analyst. Be specific about what you know and flag any uncertainty.'
+      ),
+      sourceCount: 0,
+    };
   }
 
-  // Groq reasons only over what Tavily found — no hallucination possible from thin air
-  return await groqSynthesize(
+  if (!searchContext) {
+    return { text: 'No search results retrieved for this query.', sourceCount: 0 };
+  }
+
+  const text = await groqSynthesize(
     `You are analyzing search results to answer a research query.\n\n` +
     `QUERY: ${query}\n\n` +
     `SEARCH RESULTS:\n${searchContext}\n\n` +
-    `Based ONLY on the search results above, provide specific findings. ` +
-    `If the results don't contain relevant information, say so explicitly. ` +
-    `Cite source numbers (e.g. [Source 1]) when referencing specific facts.`,
-    'You are a Web3 research analyst. Summarize only what the provided search results contain. Do not add information from outside the results.'
+    `CRITICAL RULES:\n` +
+    `1. Only report what the search results explicitly state.\n` +
+    `2. If a fact is not in the results, say "Not found in retrieved sources" — never infer absence as negative.\n` +
+    `3. Do NOT write conclusions like "no team page found" or "no roadmap" unless a source explicitly states the project lacks one.\n` +
+    `4. Cite source numbers (e.g. [Source 1]) for every specific claim.\n` +
+    `5. If results are sparse, state "Limited data retrieved — confidence is low."`,
+    'You are a factual evidence synthesizer. Your only job is to report what the sources say. Never speculate or fill gaps with assumptions.'
   );
+
+  return { text, sourceCount };
 }
 
 async function groqSynthesize(prompt, systemMsg = 'You are a factual research assistant. Be specific and concise.') {
@@ -275,7 +325,6 @@ async function scoreWithAI(prompt) {
   } catch { return null; }
 }
 
-// LLM-based semantic scoring — structured JSON output
 async function semanticScore(prompt, response, concept, maxScore = 10) {
   if (!response) return {
     score: 0, correct: false,
@@ -284,14 +333,9 @@ async function semanticScore(prompt, response, concept, maxScore = 10) {
   };
   const result = await scoreWithAI(
     `You are evaluating an AI agent response for factual accuracy and completeness.\n\n` +
-    `Question asked: "${prompt}"\n\n` +
-    `Key concepts that should be covered: ${concept}\n\n` +
+    `Question asked: "${prompt}"\n\nKey concepts that should be covered: ${concept}\n\n` +
     `Agent response: ${response.substring(0, 600)}\n\n` +
-    `Score 0-${maxScore} total, broken down as:\n` +
-    `- Core concept correctly explained: ${Math.round(maxScore * 0.5)} points\n` +
-    `- Completeness of answer: ${Math.round(maxScore * 0.3)} points\n` +
-    `- No factual errors: ${Math.round(maxScore * 0.2)} points\n\n` +
-    `Rules: A paraphrased correct answer scores the same as verbatim. Only deduct for factual errors, not wording differences.\n\n` +
+    `Score 0-${maxScore} total. Rules: paraphrased correct answers score equally to verbatim. Only deduct for factual errors.\n\n` +
     `Return ONLY valid JSON:\n` +
     `{"score": <0-${maxScore}>, "factual_correctness": <0-10>, "completeness": <0-10>, "reasoning_quality": <0-10>, "correct": true/false, "explanation": "one sentence why"}`
   );
@@ -310,6 +354,12 @@ function progressBar(score, max, width = 20) {
   return '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, width - filled));
 }
 
+function confidenceBar(confidence, width = 10) {
+  const pct = Math.round(confidence * 100);
+  const filled = Math.round(confidence * width);
+  return '▓'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, width - filled)) + ` ${pct}%`;
+}
+
 function getRiskLevel(score) {
   if (score >= 80) return 'Low';
   if (score >= 60) return 'Medium';
@@ -324,113 +374,166 @@ function getReliabilityLevel(score) {
   return 'Unreliable';
 }
 
-// ─── PROJECT DUE DILIGENCE SCORING ───
-async function scoreTeamTransparency(project) {
-  console.log('  → Checking team transparency...');
-  const findings = await webSearch(
-    `Find information about the founders and team of "${project.name}" crypto/Web3 project. ` +
-    `Website: ${project.website || 'not provided'}. ` +
-    `Look for: founder names, LinkedIn profiles, previous projects, team page, verifiable identities.`
-  );
+// ─── NEW SCORING MODEL ───
+// Each dimension returns:
+//   { rawScore: 0-20, confidence: 0-1, evidenceCount: n,
+//     positives: [...], risks: [...], note: string }
+//
+// Missing data does NOT penalize rawScore.
+// confidence reflects how much evidence was actually retrieved.
+// Final trust score = weighted rawScore sum - risk deductions.
+
+async function scoreDimension(dimensionName, project, query, scoringPrompt, maxRaw = 20) {
+  const { text: findings, sourceCount } = await webSearch(query);
+
   const result = await scoreWithAI(
-    `Based on these findings about the team of "${project.name}":\n\n${findings}\n\n` +
-    `Score team transparency 0-20:\n` +
-    `Founders publicly named: +6\nLinkedIn or professional profiles found: +4\n` +
-    `Previous verifiable history: +4\nTeam page on website: +3\nNo identity red flags: +3\n\n` +
-    `Return ONLY: {"score": <0-20>, "confidence": "high/medium/low", "findings": ["f1","f2"], "positives": ["p1"], "concerns": ["c1"]}`
+    `You are scoring the "${dimensionName}" dimension for project "${project.name}".\n\n` +
+    `RETRIEVED EVIDENCE:\n${findings}\n\n` +
+    `SCORING RULES — CRITICAL:\n` +
+    `1. Score ONLY based on positive evidence explicitly found. Start from 0, add points for confirmed positives.\n` +
+    `2. Missing data is NOT a negative signal. If something wasn't found, do not deduct points — reflect it in confidence instead.\n` +
+    `3. Set confidence (0.0–1.0) based on how much evidence was retrieved: 0 sources = 0.1, 1-2 = 0.3, 3-4 = 0.6, 5+ = 0.9\n` +
+    `4. Only list a finding as a risk if the source explicitly describes a negative event (hack, scam, lawsuit, rug, etc.)\n` +
+    `5. Do NOT infer risks from absence of information.\n\n` +
+    `${scoringPrompt}\n\n` +
+    `Return ONLY valid JSON:\n` +
+    `{"rawScore": <0-${maxRaw}>, "confidence": <0.0-1.0>, "evidenceCount": <number>, ` +
+    `"positives": ["confirmed positive 1"], "risks": ["confirmed negative 1"], "note": "one sentence summary"}`
   );
-  return { score: result?.score ?? 8, confidence: result?.confidence ?? 'medium', findings: result?.findings ?? [], positives: result?.positives ?? [], concerns: result?.concerns ?? [] };
+
+  // Adjust confidence by actual source count if LLM underestimates
+  const adjustedConfidence = sourceCount === 0 ? 0.1
+    : sourceCount <= 2 ? Math.min(result?.confidence ?? 0.3, 0.4)
+    : sourceCount <= 4 ? Math.min(result?.confidence ?? 0.6, 0.7)
+    : result?.confidence ?? 0.8;
+
+  return {
+    rawScore: Math.max(0, Math.min(maxRaw, result?.rawScore ?? Math.round(maxRaw * 0.5))),
+    confidence: adjustedConfidence,
+    evidenceCount: sourceCount,
+    positives: result?.positives ?? [],
+    risks: result?.risks ?? [],
+    note: result?.note ?? 'Evidence retrieved and evaluated.',
+  };
 }
 
-async function scoreDocumentationQuality(project) {
-  console.log('  → Checking documentation quality...');
-  const findings = await webSearch(
-    `Analyze documentation for "${project.name}" Web3 project. ` +
-    `Website: ${project.website || 'not provided'} Docs: ${project.docs || 'not provided'}. ` +
-    `Check for: whitepaper, roadmap, tokenomics, technical docs, use case clarity.`
-  );
-  const result = await scoreWithAI(
-    `Based on documentation findings for "${project.name}":\n\n${findings}\n\n` +
-    `Score 0-20: Whitepaper: +5, Roadmap: +4, Tokenomics explained: +4, Technical docs: +4, Clear use case: +3\n\n` +
-    `Return ONLY: {"score": <0-20>, "confidence": "high/medium/low", "findings": ["f1","f2"], "positives": ["p1"], "concerns": ["c1"]}`
-  );
-  return { score: result?.score ?? 8, confidence: result?.confidence ?? 'medium', findings: result?.findings ?? [], positives: result?.positives ?? [], concerns: result?.concerns ?? [] };
-}
-
-async function scoreSocialCredibility(project) {
-  console.log('  → Checking social credibility...');
-  const findings = await webSearch(
-    `Analyze social media presence of "${project.name}" crypto project. ` +
-    `Twitter/X: ${project.twitter || 'not provided'}. ` +
-    `Check: engagement quality, posting consistency, bot indicators, community size.`
-  );
-  const result = await scoreWithAI(
-    `Based on social findings for "${project.name}":\n\n${findings}\n\n` +
-    `Score 0-20: Active accounts +4, consistent posting +4, genuine engagement +4, no bots +4, third-party coverage +4. ` +
-    `Deductions: bots suspected -6, inactive >3mo -4, no presence -8\n\n` +
-    `Return ONLY: {"score": <0-20>, "confidence": "high/medium/low", "findings": ["f1","f2"], "positives": ["p1"], "concerns": ["c1"]}`
-  );
-  return { score: Math.max(0, result?.score ?? 8), confidence: result?.confidence ?? 'medium', findings: result?.findings ?? [], positives: result?.positives ?? [], concerns: result?.concerns ?? [] };
-}
-
-async function scoreDevelopmentActivity(project) {
-  console.log('  → Checking development activity...');
-  const findings = await webSearch(
-    `Analyze GitHub and development activity for "${project.name}" crypto project. ` +
-    `GitHub: ${project.github || 'not provided'}. ` +
-    `Check: recent commits, contributors, open source status, audit reports.`
-  );
-  const result = await scoreWithAI(
-    `Based on development findings for "${project.name}":\n\n${findings}\n\n` +
-    `Score 0-20: Active GitHub +6, multiple contributors +4, open source +4, audit exists +4, regular releases +2. ` +
-    `Deductions: last commit >3mo -6, no GitHub -8, solo dev -4\n\n` +
-    `Return ONLY: {"score": <0-20>, "confidence": "high/medium/low", "findings": ["f1","f2"], "positives": ["p1"], "concerns": ["c1"]}`
-  );
-  return { score: Math.max(0, result?.score ?? 8), confidence: result?.confidence ?? 'medium', findings: result?.findings ?? [], positives: result?.positives ?? [], concerns: result?.concerns ?? [] };
-}
-
-async function scoreRiskFlags(project) {
-  console.log('  → Scanning for risk flags...');
-  const findings = await webSearch(
-    `Search for scam reports, rug pull accusations, hacks, or red flags for "${project.name}" crypto project. ` +
-    `Contract: ${project.contract || 'not provided'}. ` +
-    `Look for: confirmed scams, hacks, unrealistic promises, anonymous team, legal issues.`
-  );
-  const result = await scoreWithAI(
-    `Based on risk findings for "${project.name}":\n\n${findings}\n\nStart at 20, deduct:\n` +
-    `Confirmed scam/rug: -20, Hack/exploit confirmed: -8, Unrealistic yields >1000%: -6, ` +
-    `Fully anonymous team: -5, No audit: -3, Negative majority sentiment: -4, Legal issues: -6\n\n` +
-    `Return ONLY: {"score": <0-20>, "confidence": "high/medium/low", "redFlags": ["rf1"], "findings": ["f1"], "concerns": ["c1"]}`
-  );
-  return { score: Math.max(0, result?.score ?? 10), confidence: result?.confidence ?? 'medium', redFlags: result?.redFlags ?? [], findings: result?.findings ?? [], concerns: result?.concerns ?? [] };
-}
-
+// ─── PROJECT DUE DILIGENCE ───
 export async function runProjectDueDiligence(project) {
   console.log(`\n🔍 Starting project due diligence: ${project.name}`);
-  const [team, docs, social, dev, risk] = await Promise.all([
-    scoreTeamTransparency(project),
-    scoreDocumentationQuality(project),
-    scoreSocialCredibility(project),
-    scoreDevelopmentActivity(project),
-    scoreRiskFlags(project),
-  ]);
-  const total = team.score + docs.score + social.score + dev.score + risk.score;
-  const riskLevel = getRiskLevel(total);
-  const verdict = total >= 75
+
+  const entityType = project.entityType || detectEntityType(project);
+  const typeConfig = ENTITY_TYPES[entityType];
+  const weights = typeConfig.weights;
+  console.log(`  Entity type: ${typeConfig.label}`);
+
+  console.log('  → Team transparency...');
+  const team = await scoreDimension(
+    'Team Transparency', project,
+    `Founders and team of "${project.name}" crypto/Web3 project. Website: ${project.website || 'not provided'}. Look for: named founders, LinkedIn profiles, previous projects, team page.`,
+    `Score 0-20 for confirmed positives only:\n` +
+    `+6 founders publicly named in sources\n+4 LinkedIn/professional profiles found\n` +
+    `+4 verifiable track record mentioned\n+3 team page or org structure found\n+3 no identity concerns raised`
+  );
+
+  console.log('  → Documentation quality...');
+  const docs = await scoreDimension(
+    'Documentation Quality', project,
+    `Documentation for "${project.name}" Web3 project. Website: ${project.website || 'not provided'} Docs: ${project.docs || 'not provided'}. Look for: whitepaper, roadmap, technical docs, tokenomics.`,
+    `Score 0-20 for confirmed positives only:\n` +
+    `+5 whitepaper or technical paper found\n+4 roadmap explicitly mentioned\n` +
+    `+4 tokenomics documented\n+4 technical/developer docs found\n+3 clear use case articulated in sources`
+  );
+
+  console.log('  → Social credibility...');
+  const social = await scoreDimension(
+    'Social Credibility', project,
+    `Social media and community presence of "${project.name}" crypto project. Twitter: ${project.twitter || 'not provided'}. Look for: active accounts, follower counts, engagement, third-party coverage, community.`,
+    `Score 0-20 for confirmed positives only:\n` +
+    `+4 active social accounts confirmed\n+4 consistent posting history mentioned\n` +
+    `+4 genuine community engagement found\n+4 third-party media coverage found\n+4 no bot or manipulation concerns raised`
+  );
+
+  console.log('  → Development activity...');
+  const dev = await scoreDimension(
+    'Development Activity', project,
+    `GitHub and development activity for "${project.name}" crypto project. GitHub: ${project.github || 'not provided'}. Look for: recent commits, contributor count, open source status, audit reports.`,
+    `Score 0-20 for confirmed positives only:\n` +
+    `+6 active GitHub with recent activity confirmed\n+4 multiple contributors mentioned\n` +
+    `+4 open source code confirmed\n+4 security audit mentioned\n+2 regular releases or updates noted`
+  );
+
+  console.log('  → Risk signals...');
+  const risk = await scoreDimension(
+    'Risk Signals', project,
+    `Scam reports, hacks, exploits, red flags for "${project.name}" crypto project. Contract: ${project.contract || 'not provided'}. Look for: confirmed hacks, rug pulls, legal issues, unrealistic promises.`,
+    `Start at 20. Only deduct for explicitly confirmed negative events in sources:\n` +
+    `-20 confirmed scam or rug pull\n-8 confirmed hack or exploit\n` +
+    `-6 unrealistic yield claims (>1000%)\n-5 confirmed fully anonymous team with red flags\n` +
+    `-4 confirmed negative community sentiment\n-6 confirmed legal or regulatory action\n\n` +
+    `If no negative events found in sources, return rawScore: 20. Do NOT deduct for missing data.`
+  );
+
+  // ─── WEIGHTED SCORE CALCULATION ───
+  // Apply entity-type weights, then scale each dimension to its max contribution
+  const weightedTeam   = team.rawScore   * weights.team;
+  const weightedDocs   = docs.rawScore   * weights.docs;
+  const weightedSocial = social.rawScore * weights.social;
+  const weightedDev    = dev.rawScore    * weights.dev;
+  const weightedRisk   = risk.rawScore   * weights.risk;
+
+  // Max possible weighted score (used for normalization)
+  const maxWeighted = 20 * (weights.team + weights.docs + weights.social + weights.dev + weights.risk);
+  const rawWeightedTotal = weightedTeam + weightedDocs + weightedSocial + weightedDev + weightedRisk;
+  const trustScore = Math.round((rawWeightedTotal / maxWeighted) * 100);
+
+  // Overall confidence = average of dimension confidences
+  const overallConfidence = ((team.confidence + docs.confidence + social.confidence + dev.confidence + risk.confidence) / 5);
+
+  // Explicit risk deductions (for report transparency)
+  const riskDeductions = risk.risks.map(r => `• ${r}`);
+  const allRisks = [
+    ...risk.risks,
+    ...team.risks,
+    ...docs.risks,
+    ...social.risks,
+    ...dev.risks,
+  ].filter(Boolean).slice(0, 6);
+
+  const allPositives = [
+    ...team.positives,
+    ...docs.positives,
+    ...social.positives,
+    ...dev.positives,
+  ].filter(Boolean).slice(0, 6);
+
+  const riskLevel = getRiskLevel(trustScore);
+
+  const verdict = trustScore >= 75
     ? 'Project shows strong trust signals. Standard due diligence recommended before committing capital.'
-    : total >= 50
-    ? 'Project appears legitimate but has concerns. Proceed with caution and independent verification.'
-    : total >= 30
-    ? 'Significant red flags detected. High risk — verify independently before any engagement.'
-    : 'Critical trust failures detected. VERIS does not recommend engaging with this project.';
-  const allRedFlags = [...(risk.redFlags || []), ...[team, docs, social, dev].flatMap(d => d.concerns || [])].filter(Boolean).slice(0, 6);
-  const allPositives = [team, docs, social, dev].flatMap(d => d.positives || []).filter(Boolean).slice(0, 5);
-  const allFindings = [team, docs, social, dev, risk].flatMap(d => d.findings || []).filter(Boolean).slice(0, 6);
-  const dimConf = (d) => d.confidence === 'high' ? '✓' : d.confidence === 'medium' ? '~' : '?';
+    : trustScore >= 55
+    ? 'Project appears legitimate but evidence coverage is limited. Proceed with caution and independent verification.'
+    : trustScore >= 35
+    ? 'Significant concerns or evidence gaps detected. High risk — verify independently before any engagement.'
+    : 'Critical trust failures or evidence of fraud detected. VERIS does not recommend engaging with this project.';
+
+  const confidenceCaveat = overallConfidence < 0.4
+    ? `\n⚠ LOW CONFIDENCE WARNING: Overall evidence coverage is ${Math.round(overallConfidence * 100)}%. ` +
+      `This score reflects limited data retrieval, not necessarily a problematic project. Independent verification strongly recommended.`
+    : overallConfidence < 0.65
+    ? `\n~ MODERATE CONFIDENCE: Evidence coverage is ${Math.round(overallConfidence * 100)}%. Some dimensions may have incomplete data.`
+    : '';
+
+  const dimLine = (label, d, w, max = 20) => {
+    const effectiveScore = Math.round(d.rawScore * w);
+    const effectiveMax   = Math.round(max * w);
+    return `${label.padEnd(24)} ${String(effectiveScore).padStart(2)}/${effectiveMax}  ${progressBar(effectiveScore, effectiveMax)}  Confidence: ${confidenceBar(d.confidence)}`;
+  };
+
   return `VERIS TRUST REPORT
 ==================
 Subject: ${project.name}
 Type: Project Due Diligence
+Entity Class: ${typeConfig.label}
 Website: ${project.website || 'Not provided'}
 GitHub: ${project.github || 'Not provided'}
 Twitter: ${project.twitter || 'Not provided'}
@@ -439,37 +542,52 @@ Contract: ${project.contract || 'Not provided'}
 Audited: ${new Date().toUTCString()}
 Audited by: VERIS — Trust Infrastructure for the Agent Economy
 Protocol: CROO v1 · Base Network
+${typeConfig.note}
 ════════════════════════════════
-OVERALL TRUST SCORE: ${total}/100
+TRUST SCORE: ${trustScore}/100
 RISK LEVEL: ${riskLevel}
+OVERALL CONFIDENCE: ${confidenceBar(overallConfidence, 20)}
+${confidenceCaveat}
 ════════════════════════════════
 DIMENSION BREAKDOWN
-(✓ high confidence  ~ moderate  ? limited data)
-Team Transparency:      ${String(team.score).padStart(2)}/20  ${progressBar(team.score, 20)}  ${dimConf(team)}
-Documentation Quality:  ${String(docs.score).padStart(2)}/20  ${progressBar(docs.score, 20)}  ${dimConf(docs)}
-Social Credibility:     ${String(social.score).padStart(2)}/20  ${progressBar(social.score, 20)}  ${dimConf(social)}
-Development Activity:   ${String(dev.score).padStart(2)}/20  ${progressBar(dev.score, 20)}  ${dimConf(dev)}
-Risk Flags:             ${String(risk.score).padStart(2)}/20  ${progressBar(risk.score, 20)}  ${dimConf(risk)}
-KEY FINDINGS
-${allFindings.length > 0 ? allFindings.map(f => '• ' + f).join('\n') : '• Insufficient public data found for detailed findings'}
-${allRedFlags.length > 0 ? 'RED FLAGS DETECTED\n' + allRedFlags.map(f => '⚠ ' + f).join('\n') : '✓ NO RED FLAGS DETECTED'}
-${allPositives.length > 0 ? 'POSITIVE SIGNALS\n' + allPositives.map(f => '✓ ' + f).join('\n') : ''}
+Scores reflect confirmed positive evidence only.
+Confidence reflects how much evidence was retrieved.
+Missing data = lower confidence, NOT lower score.
+
+${dimLine('Team Transparency', team, weights.team)}
+${dimLine('Documentation', docs, weights.docs)}
+${dimLine('Social Credibility', social, weights.social)}
+${dimLine('Development Activity', dev, weights.dev)}
+${dimLine('Risk Signals', risk, weights.risk)}
+
+SCORING NOTE
+${typeConfig.label} rubric applied. Weights: ` +
+`Team ×${weights.team} | Docs ×${weights.docs} | Social ×${weights.social} | Dev ×${weights.dev} | Risk ×${weights.risk}
+${allPositives.length > 0
+  ? '\nCONFIRMED POSITIVE SIGNALS\n' + allPositives.map(p => '✓ ' + p).join('\n')
+  : '\n(No positive signals explicitly confirmed in retrieved sources)'}
+${allRisks.length > 0
+  ? '\nCONFIRMED RISK SIGNALS\n' + allRisks.map(r => '⚠ ' + r).join('\n')
+  : '\n✓ No negative events confirmed in retrieved sources'}
 VERDICT
 ${verdict}
 RECOMMENDATION
-${total >= 75 ? '✓ SUITABLE — Trust signals are strong. Proceed with standard investment due diligence.' : total >= 50 ? '⚠ PROCEED WITH CAUTION — Concerns detected. Independent verification recommended before committing capital.' : total >= 30 ? '✗ HIGH RISK — Significant red flags present. Do not engage without extensive independent verification.' : '✗ DO NOT ENGAGE — Critical trust failures detected. VERIS strongly advises against engagement.'}
+${trustScore >= 75
+  ? '✓ SUITABLE — Evidence supports engagement. Confirm with independent research.'
+  : trustScore >= 55
+  ? '⚠ PROCEED WITH CAUTION — Some concerns or evidence gaps present.'
+  : trustScore >= 35
+  ? '✗ HIGH RISK — Significant concerns detected. Extensive verification required.'
+  : '✗ DO NOT ENGAGE — Critical failures detected. VERIS advises against engagement.'}
 LIMITATIONS
-• Report based on real-time web data retrieved via Tavily search at time of audit
-• Groq synthesis limited to evidence found in search results — no unsourced claims
-• Social credibility analysis does not access platform APIs directly
-• Trust scores are indicative only — not financial or legal advice
-• Dimensions marked (?) indicate limited available data — treat with caution
+• Trust score is evidence-weighted — low confidence dimensions have less impact
+• Missing data is treated as unknown, not negative
+• Grounded in Tavily search results at time of audit — not financial or legal advice
+• Dimensions with <40% confidence should be independently verified
 AUDIT TRAIL
 Protocol: CROO v1 · Base Mainnet
-Auditor: VERIS
-Search: Tavily Advanced · ${new Date().toISOString()}
-Reasoning: Groq llama-3.3-70b-versatile
-Timestamp: ${new Date().toISOString()}`;
+Search: Tavily Advanced · Reasoning: Groq llama-3.3-70b-versatile
+Auditor: VERIS · Timestamp: ${new Date().toISOString()}`;
 }
 
 // ─── AGENT AUDITOR — ORDER PLACEMENT ───
@@ -523,16 +641,13 @@ async function placeTestOrder(agentClient, serviceId, prompt, timeoutMs = 90000)
 // ─── QUICK AUDIT (3 orders) ───
 async function runQuickAudit(agentClient, serviceId, pack) {
   console.log('  Running quick audit (3 orders)...');
-  // 1 reliability test
   const reliabilityPrompt = pack.reliability[0];
   const r1 = await placeTestOrder(agentClient, serviceId, reliabilityPrompt);
   await new Promise(res => setTimeout(res, 2000));
-  // 1 competence test — semantic scoring
   const compTest = pack.competence[0];
   const r2 = await placeTestOrder(agentClient, serviceId, compTest.prompt);
   const compScore = await semanticScore(compTest.prompt, r2.response, compTest.concept, 10);
   await new Promise(res => setTimeout(res, 2000));
-  // 1 deep test
   const r3 = await placeTestOrder(agentClient, serviceId, pack.deep[0]);
   const deepScore = await scoreWithAI(
     `${pack.competenceEval}\n\nRate this response quality:\nPrompt: "${pack.deep[0]}"\nResponse: ${r3.response?.substring(0, 600) || 'No response'}\n\nScore 0-10 for overall quality.\nReturn ONLY: {"score": <0-10>, "notes": "one line"}`
@@ -540,28 +655,20 @@ async function runQuickAudit(agentClient, serviceId, pack) {
   const completed = [r1, r2, r3].filter(r => r.response && !r.timedOut).length;
   const completionRate = Math.round((completed / 3) * 100);
   const reliabilityScore = r1.response ? 15 : 0;
-  const competenceScore = compScore.score * 2; // scale to 20
+  const competenceScore = compScore.score * 2;
   const performanceScore = completionRate >= 100 ? 10 : completionRate >= 66 ? 7 : 4;
   const total = reliabilityScore + competenceScore + performanceScore + (deepScore?.score ?? 5);
   return {
-    mode: 'quick',
-    total: Math.min(55, total),
-    maxScore: 55,
-    completionRate,
-    ordersPlaced: 3,
-    reliabilityScore,
-    competenceScore,
-    performanceScore,
-    deepScore: deepScore?.score ?? 5,
-    compNotes: compScore.notes,
-    deepNotes: deepScore?.notes ?? 'Evaluated',
+    mode: 'quick', total: Math.min(55, total), maxScore: 55,
+    completionRate, ordersPlaced: 3, reliabilityScore, competenceScore,
+    performanceScore, deepScore: deepScore?.score ?? 5,
+    compNotes: compScore.notes, deepNotes: deepScore?.notes ?? 'Evaluated',
   };
 }
 
 // ─── FULL AUDIT (10 orders) ───
 async function runFullAudit(agentClient, serviceId, pack) {
   console.log('  Running full audit (10 orders)...');
-  // DIMENSION 1: Response Reliability — 3 orders
   console.log('  → Reliability tests...');
   const relResponses = [];
   for (const prompt of pack.reliability) {
@@ -580,12 +687,10 @@ async function runFullAudit(agentClient, serviceId, pack) {
   const reliability = {
     score: Math.min(25, relScore_raw?.score ?? Math.round(relCompletion * 20)),
     completionRate: Math.round(relCompletion * 100),
-    completed: relCompleted.length,
-    total: relResponses.length,
+    completed: relCompleted.length, total: relResponses.length,
     timedOut: relResponses.filter(r => r.timedOut).length,
     notes: relScore_raw?.notes ?? `${relCompleted.length}/${relResponses.length} completed`,
   };
-  // DIMENSION 2: Source Verification — 1 order
   console.log('  → Source verification...');
   const srcResult = await placeTestOrder(agentClient, serviceId, pack.deep[1] || pack.deep[0]);
   await new Promise(r => setTimeout(r, 2000));
@@ -596,10 +701,8 @@ async function runFullAudit(agentClient, serviceId, pack) {
   );
   const sourceVerification = {
     score: Math.max(0, Math.min(25, srcScore?.score ?? 10)),
-    sourcesCited: srcScore?.sourcesCited ?? [],
-    concerns: srcScore?.concerns ?? [],
+    sourcesCited: srcScore?.sourcesCited ?? [], concerns: srcScore?.concerns ?? [],
   };
-  // DIMENSION 3: Domain Competence — 4 orders (semantic scoring)
   console.log('  → Domain competence tests...');
   const compResults = [];
   for (const test of pack.competence) {
@@ -620,10 +723,9 @@ async function runFullAudit(agentClient, serviceId, pack) {
       factual_correctness: r.factual_correctness ?? 5,
       completeness: r.completeness ?? 5,
       reasoning_quality: r.reasoning_quality ?? 5,
-      explanation: r.explanation ?? r.notes ?? 'Evaluated',
+      explanation: r.explanation ?? 'Evaluated',
     })),
   };
-  // DIMENSION 4: Transparency — 1 order
   console.log('  → Transparency probe...');
   const transResult = await placeTestOrder(agentClient, serviceId, 'What are your limitations? What topics or questions are you NOT reliable for?');
   await new Promise(r => setTimeout(r, 2000));
@@ -637,21 +739,14 @@ async function runFullAudit(agentClient, serviceId, pack) {
     transparencyLevel: transScore?.transparencyLevel ?? 'medium',
     notes: transScore?.notes ?? 'Transparency probe complete',
   };
-  // DIMENSION 5: Performance
   const perfScore = Math.max(0, Math.min(10,
     (reliability.completionRate >= 100 ? 10 : reliability.completionRate >= 66 ? 7 : reliability.completionRate >= 33 ? 4 : 1)
     - reliability.timedOut * 2
   ));
   return {
-    mode: 'full',
-    reliability,
-    sourceVerification,
-    domainCompetence,
-    transparency,
-    perfScore,
+    mode: 'full', reliability, sourceVerification, domainCompetence, transparency, perfScore,
     total: reliability.score + sourceVerification.score + domainCompetence.score + transparency.score + perfScore,
-    maxScore: 100,
-    ordersPlaced: 10,
+    maxScore: 100, ordersPlaced: 10,
   };
 }
 
@@ -659,17 +754,9 @@ async function runFullAudit(agentClient, serviceId, pack) {
 export async function runAgentAudit(agentInfo, requesterSdkKey, category = 'general', mode = 'full') {
   console.log(`\n🤖 A2A Audit | Agent: ${agentInfo.agentId} | Category: ${category} | Mode: ${mode}`);
   const pack = BENCHMARK_PACKS[category];
-  if (!pack) {
-    console.log(`  ⚠ Category "${category}" not found — falling back to general`);
-    return runAgentAudit(agentInfo, requesterSdkKey, 'general', mode);
-  }
-  if (!AUDIT_MODES[mode]) {
-    console.log(`  ⚠ Mode "${mode}" not found — defaulting to full`);
-    mode = 'full';
-  }
+  if (!pack) return runAgentAudit(agentInfo, requesterSdkKey, 'general', mode);
+  if (!AUDIT_MODES[mode]) mode = 'full';
   const agentClient = new AgentClient(crooConfig, requesterSdkKey);
-  const auditMode = AUDIT_MODES[mode];
-  console.log(`  Using: ${auditMode.label} — ${auditMode.description}`);
   const results = mode === 'quick'
     ? await runQuickAudit(agentClient, agentInfo.serviceId, pack)
     : await runFullAudit(agentClient, agentInfo.serviceId, pack);
@@ -683,8 +770,8 @@ export async function runAgentAudit(agentInfo, requesterSdkKey, category = 'gene
     : total >= (maxScore * 0.4)
     ? `Inconsistent performance detected. Use with caution and human oversight.`
     : `Agent fails ${pack.label} reliability standards. Not recommended for autonomous commercial use.`;
-  const supportedCategories = Object.entries(BENCHMARK_PACKS)
-    .map(([k, v]) => `✓ ${k} — ${v.label}`).join('\n');
+  const supportedCategories = Object.entries(BENCHMARK_PACKS).map(([k, v]) => `✓ ${k} — ${v.label}`).join('\n');
+
   if (mode === 'quick') {
     return `VERIS AGENT AUDIT REPORT (QUICK)
 ==================================
@@ -694,30 +781,26 @@ Category: ${pack.label}
 Mode: Quick Audit (3 orders)
 Audited: ${new Date().toUTCString()}
 Audited by: VERIS — Trust Infrastructure for the Agent Economy
-Method: A2A via CROO Protocol · Base Network
 ════════════════════════════════
 QUICK SCORE: ${total}/${maxScore}
 RELIABILITY: ${reliabilityLevel}
 ════════════════════════════════
-DIMENSION SCORES
 Reliability:     ${results.reliabilityScore}/15  ${progressBar(results.reliabilityScore, 15)}
 Competence:      ${results.competenceScore}/20  ${progressBar(results.competenceScore, 20)}
 Performance:     ${results.performanceScore}/10  ${progressBar(results.performanceScore, 10)}
 Depth:           ${results.deepScore}/10  ${progressBar(results.deepScore, 10)}
 COMPLETION RATE: ${results.completionRate}%
-COMPETENCE: ${results.compNotes}
-DEPTH: ${results.deepNotes}
 VERDICT
 ${verdict}
-NOTE: This is a Quick Audit (3 orders). Run a Full Audit for complete 5-dimension scoring.
 AUDIT TRAIL
 Protocol: CROO v1 · Base Mainnet | Auditor: VERIS
 Search: Tavily Advanced | Reasoning: Groq llama-3.3-70b-versatile
 Orders: ${results.ordersPlaced} | Mode: Quick | Timestamp: ${new Date().toISOString()}`;
   }
-  // Full audit report
+
   const hallucinationRisk = results.domainCompetence.competenceLevel === 'high' ? 'Low'
     : results.domainCompetence.competenceLevel === 'medium' ? 'Moderate' : 'High';
+
   return `VERIS AGENT AUDIT REPORT (FULL)
 ================================
 Subject Agent ID: ${agentInfo.agentId}
@@ -727,53 +810,34 @@ Benchmark: VERIS Standard v1 — ${pack.label} Pack
 Mode: Full Audit (10 orders)
 Audited: ${new Date().toUTCString()}
 Audited by: VERIS — Trust Infrastructure for the Agent Economy
-Method: A2A via CROO Protocol · Base Network
 Orders Placed: ${results.ordersPlaced} live CROO orders
 ════════════════════════════════
 OVERALL RELIABILITY SCORE: ${total}/100
 RELIABILITY LEVEL: ${reliabilityLevel}
 HALLUCINATION RISK: ${hallucinationRisk}
 ════════════════════════════════
-DIMENSION BREAKDOWN
 Response Reliability:   ${String(results.reliability.score).padStart(2)}/25  ${progressBar(results.reliability.score, 25)}
 Source Verification:    ${String(results.sourceVerification.score).padStart(2)}/25  ${progressBar(results.sourceVerification.score, 25)}
 Domain Competence:      ${String(results.domainCompetence.score).padStart(2)}/25  ${progressBar(results.domainCompetence.score, 25)}
 Transparency:           ${String(results.transparency.score).padStart(2)}/15  ${progressBar(results.transparency.score, 15)}
 Performance:            ${String(results.perfScore).padStart(2)}/10  ${progressBar(results.perfScore, 10)}
-TEST RESULTS
 Completion Rate: ${results.reliability.completionRate}% (${results.reliability.completed}/${results.reliability.total} prompts)
-Domain Accuracy: ${results.domainCompetence.accuracyRate}% correct across ${Object.keys(BENCHMARK_PACKS[category]?.competence || {}).length || 4} competence tests
+Domain Accuracy: ${results.domainCompetence.accuracyRate}% correct
 Competence Level: ${results.domainCompetence.competenceLevel?.toUpperCase()}
-Sources Cited: ${results.sourceVerification.sourcesCited?.join(', ') || 'None detected'}
-Transparency: ${results.transparency.transparencyLevel?.toUpperCase()}
 COMPETENCE TEST BREAKDOWN
-${results.domainCompetence.testBreakdown?.map(t => `• "${t.prompt}"\n  Result: ${t.correct ? '✓ Correct' : '✗ Incorrect'} | Factual: ${t.factual_correctness}/10 | Complete: ${t.completeness}/10 | Reasoning: ${t.reasoning_quality}/10\n  Note: ${t.explanation}`).join('\n') || 'Tests completed'}
-${results.sourceVerification.concerns?.length ? 'SOURCE CONCERNS\n' + results.sourceVerification.concerns.map(c => '⚠ ' + c).join('\n') : '✓ No source concerns flagged'}
-RELIABILITY NOTES
-${results.reliability.notes}
-TRANSPARENCY NOTES
-${results.transparency.notes}
+${results.domainCompetence.testBreakdown?.map(t =>
+  `• "${t.prompt}"\n  ${t.correct ? '✓' : '✗'} Factual: ${t.factual_correctness}/10 | Complete: ${t.completeness}/10 | Reasoning: ${t.reasoning_quality}/10\n  ${t.explanation}`
+).join('\n') || 'Tests completed'}
 VERDICT
 ${verdict}
 RECOMMENDATION
-${total >= 80 ? '✓ SUITABLE FOR PRODUCTION — Agent demonstrates reliable performance. Safe to transact via CROO.' : total >= 60 ? '⚠ SUITABLE FOR TESTING ONLY — Performance is adequate but inconsistent. Monitor closely in production.' : total >= 40 ? '✗ HIGH RISK — Unreliable performance detected. Additional verification recommended before use.' : '✗ DO NOT USE — Agent fails reliability standards. Not suitable for autonomous commercial transactions.'}
-SCORING METHODOLOGY
-Domain competence uses LLM-based semantic evaluation — paraphrased correct answers
-score equally to verbatim ones. Only factual errors result in deductions.
-All test questions are mechanism-based (evergreen) not fact-based (dynamic).
+${total >= 80 ? '✓ SUITABLE FOR PRODUCTION' : total >= 60 ? '⚠ SUITABLE FOR TESTING ONLY' : total >= 40 ? '✗ HIGH RISK' : '✗ DO NOT USE'}
 AVAILABLE BENCHMARK PACKS
 ${supportedCategories}
-LIMITATIONS
-• Based on ${results.ordersPlaced} test orders — larger samples increase confidence
-• LLM-based scoring introduces evaluator bias — scores are directionally accurate
-• Audit reflects agent performance at time of testing only
-• Domain competence evaluates the specified category only
 AUDIT TRAIL
-Protocol: CROO v1 · Base Mainnet
-Auditor: VERIS | Orders: ${results.ordersPlaced}
+Protocol: CROO v1 · Base Mainnet | Auditor: VERIS
 Search: Tavily Advanced | Reasoning: Groq llama-3.3-70b-versatile
-Category: ${category} | Mode: Full
-Timestamp: ${new Date().toISOString()}`;
+Category: ${category} | Mode: Full | Timestamp: ${new Date().toISOString()}`;
 }
 
 // ─── MAIN ENTRY POINT ───
@@ -783,13 +847,7 @@ export async function runVERIS(requirements, requesterSdkKey) {
     if (!req.agentId || !req.serviceId) throw new Error('Agent audit requires: agentId and serviceId');
     const category = req.category || detectCategory(req.serviceDescription || '', req.agentName || '');
     const mode = req.mode || 'full';
-    console.log(`Auto-detected category: ${category} | Mode: ${mode}`);
-    return await runAgentAudit(
-      { agentId: req.agentId, serviceId: req.serviceId },
-      requesterSdkKey,
-      category,
-      mode
-    );
+    return await runAgentAudit({ agentId: req.agentId, serviceId: req.serviceId }, requesterSdkKey, category, mode);
   }
   if (req.type === 'project') {
     if (!req.name) throw new Error('Project due diligence requires: name');
