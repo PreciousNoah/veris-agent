@@ -13,38 +13,111 @@ const crooConfig = {
   logger: { debug: () => {}, info: console.log, warn: console.warn, error: console.error },
 };
 
-// ─── ENTITY TYPE DETECTION ───
-// Different project archetypes need different scoring rubrics
-const ENTITY_TYPES = {
+// ═══════════════════════════════════════════════════════
+// STEP 1 — ENTITY CLASSIFICATION
+// ═══════════════════════════════════════════════════════
+//
+// Each template defines:
+//   dimensions  — what evidence buckets to collect
+//   weights     — how much each bucket contributes to trust score (must sum to 1.0)
+//   note        — shown in report, explains rubric choice
+
+const ENTITY_TEMPLATES = {
   infrastructure: {
     label: 'Infrastructure Protocol',
-    signals: ['foundation', 'protocol', 'layer', 'network', 'ledger', 'chain', 'xrp', 'bitcoin', 'ethereum', 'cosmos', 'polkadot', 'avalanche', 'solana'],
-    weights: { team: 0.8, docs: 1.4, social: 0.8, dev: 1.6, risk: 1.4 },
-    note: 'Infrastructure protocols often have distributed governance and no traditional startup team page. Scoring weighted toward development activity and documentation.',
+    signals: ['foundation', 'protocol', 'layer 1', 'layer 2', 'network', 'ledger', 'chain', 'xrp', 'bitcoin', 'ethereum', 'cosmos', 'polkadot', 'avalanche', 'solana', 'ripple', 'xrpl'],
+    dimensions: {
+      documentation:   { label: 'Documentation',      weight: 0.25, maxRaw: 20 },
+      development:     { label: 'Development Activity',weight: 0.35, maxRaw: 20 },
+      team:            { label: 'Team / Governance',   weight: 0.15, maxRaw: 20 },
+      social:          { label: 'Ecosystem Adoption',  weight: 0.10, maxRaw: 20 },
+      trustRisk:       { label: 'Trust Risk',          weight: 0.15, maxRaw: 20 },
+    },
+    note: 'Infrastructure rubric: weighted toward development activity and documentation. Distributed governance means no traditional team page — absence is not a red flag.',
   },
   memecoin: {
     label: 'Meme Coin / Token',
-    signals: ['meme', 'doge', 'shib', 'pepe', 'inu', 'elon', 'moon', 'safe', 'cum', 'chad'],
-    weights: { team: 1.4, docs: 0.8, social: 1.4, dev: 1.0, risk: 1.4 },
-    note: 'Meme coins scored with extra weight on team identity and risk signals.',
+    signals: ['meme', 'doge', 'shib', 'pepe', 'inu', 'elon', 'moon', '$', 'fair launch', 'stealth launch'],
+    dimensions: {
+      team:            { label: 'Team Identity',       weight: 0.10, maxRaw: 20 },
+      social:          { label: 'Community',           weight: 0.35, maxRaw: 20 },
+      liquidity:       { label: 'Liquidity Signals',   weight: 0.25, maxRaw: 20 },
+      documentation:   { label: 'Documentation',       weight: 0.10, maxRaw: 20 },
+      trustRisk:       { label: 'Trust Risk',          weight: 0.20, maxRaw: 20 },
+    },
+    note: 'Meme coin rubric: community and liquidity weighted heavily. Trust risk weighted at 20% — rug pull signals are critical.',
   },
   aiagent: {
     label: 'AI Agent / Product',
-    signals: ['ai agent', 'agent', 'gpt', 'llm', 'autonomous', 'bot', 'assistant', 'autopilot'],
-    weights: { team: 1.2, docs: 1.2, social: 1.0, dev: 1.2, risk: 1.4 },
-    note: 'AI agents scored with attention to team credibility and technical documentation.',
+    signals: ['ai agent', 'autonomous agent', 'llm', 'gpt', 'copilot', 'assistant', 'autopilot', 'croo', 'veris'],
+    dimensions: {
+      team:            { label: 'Creator Identity',    weight: 0.20, maxRaw: 20 },
+      documentation:   { label: 'Transparency / Docs', weight: 0.20, maxRaw: 20 },
+      functionality:   { label: 'Functionality',       weight: 0.30, maxRaw: 20 },
+      social:          { label: 'Usage Signals',       weight: 0.15, maxRaw: 20 },
+      trustRisk:       { label: 'Trust Risk',          weight: 0.15, maxRaw: 20 },
+    },
+    note: 'AI agent rubric: functionality and creator identity weighted most. Usage signals proxy real-world adoption.',
+  },
+  dao: {
+    label: 'DAO / Governance Protocol',
+    signals: ['dao', 'governance', 'vote', 'proposal', 'treasury', 'multisig', 'snapshot'],
+    dimensions: {
+      governance:      { label: 'Governance Structure',weight: 0.30, maxRaw: 20 },
+      documentation:   { label: 'Documentation',       weight: 0.25, maxRaw: 20 },
+      development:     { label: 'Development Activity',weight: 0.20, maxRaw: 20 },
+      social:          { label: 'Community',           weight: 0.10, maxRaw: 20 },
+      trustRisk:       { label: 'Trust Risk',          weight: 0.15, maxRaw: 20 },
+    },
+    note: 'DAO rubric: governance structure and docs weighted highest. On-chain treasury transparency is a key signal.',
   },
   defi: {
     label: 'DeFi Protocol',
-    signals: ['defi', 'yield', 'lending', 'borrow', 'swap', 'amm', 'pool', 'vault', 'liquid staking'],
-    weights: { team: 1.1, docs: 1.1, social: 1.0, dev: 1.2, risk: 1.6 },
-    note: 'DeFi protocols scored with strong weight on risk signals and smart contract audit status.',
+    signals: ['defi', 'yield', 'lending', 'borrow', 'swap', 'amm', 'pool', 'vault', 'liquid staking', 'perp', 'dex', 'cex'],
+    dimensions: {
+      team:            { label: 'Team',                weight: 0.15, maxRaw: 20 },
+      documentation:   { label: 'Documentation',       weight: 0.20, maxRaw: 20 },
+      development:     { label: 'Development Activity',weight: 0.25, maxRaw: 20 },
+      social:          { label: 'Community',           weight: 0.10, maxRaw: 20 },
+      trustRisk:       { label: 'Trust Risk',          weight: 0.30, maxRaw: 20 },
+    },
+    note: 'DeFi rubric: trust risk weighted at 30% — smart contract security signals are critical for financial protocols.',
+  },
+  nft: {
+    label: 'NFT Project',
+    signals: ['nft', 'collection', 'mint', 'opensea', 'blur', 'pfp', 'generative', 'art project'],
+    dimensions: {
+      team:            { label: 'Creator Identity',    weight: 0.20, maxRaw: 20 },
+      social:          { label: 'Community',           weight: 0.30, maxRaw: 20 },
+      documentation:   { label: 'Roadmap / Utility',   weight: 0.20, maxRaw: 20 },
+      development:     { label: 'Development / Tech',  weight: 0.10, maxRaw: 20 },
+      trustRisk:       { label: 'Trust Risk',          weight: 0.20, maxRaw: 20 },
+    },
+    note: 'NFT rubric: community and creator identity weighted heavily. Roadmap clarity matters for utility projects.',
+  },
+  saas: {
+    label: 'SaaS / Tooling',
+    signals: ['saas', 'tool', 'sdk', 'api', 'platform', 'dashboard', 'analytics', 'explorer', 'wallet', 'indexer'],
+    dimensions: {
+      team:            { label: 'Team',                weight: 0.20, maxRaw: 20 },
+      documentation:   { label: 'Documentation',       weight: 0.25, maxRaw: 20 },
+      development:     { label: 'Development Activity',weight: 0.25, maxRaw: 20 },
+      social:          { label: 'Usage / Adoption',    weight: 0.15, maxRaw: 20 },
+      trustRisk:       { label: 'Trust Risk',          weight: 0.15, maxRaw: 20 },
+    },
+    note: 'SaaS/tooling rubric: documentation and development activity weighted equally. Product adoption is a key trust signal.',
   },
   general: {
     label: 'General Project',
     signals: [],
-    weights: { team: 1.0, docs: 1.0, social: 1.0, dev: 1.0, risk: 1.0 },
-    note: 'General rubric applied.',
+    dimensions: {
+      team:            { label: 'Team',                weight: 0.20, maxRaw: 20 },
+      documentation:   { label: 'Documentation',       weight: 0.20, maxRaw: 20 },
+      development:     { label: 'Development Activity',weight: 0.20, maxRaw: 20 },
+      social:          { label: 'Community / Social',  weight: 0.20, maxRaw: 20 },
+      trustRisk:       { label: 'Trust Risk',          weight: 0.20, maxRaw: 20 },
+    },
+    note: 'General rubric applied. For more accurate scoring, specify project type.',
   },
 };
 
@@ -52,17 +125,24 @@ export function detectEntityType(project) {
   const text = (
     (project.name || '') + ' ' +
     (project.description || '') + ' ' +
-    (project.website || '')
+    (project.website || '') + ' ' +
+    (project.entityType || '')
   ).toLowerCase();
 
-  for (const [type, config] of Object.entries(ENTITY_TYPES)) {
+  // Score all types, pick best match
+  let bestType = 'general';
+  let bestScore = 0;
+  for (const [type, config] of Object.entries(ENTITY_TEMPLATES)) {
     if (type === 'general') continue;
-    if (config.signals.some(s => text.includes(s))) return type;
+    const score = config.signals.filter(s => text.includes(s)).length;
+    if (score > bestScore) { bestScore = score; bestType = type; }
   }
-  return 'general';
+  return bestType;
 }
 
-// ─── BENCHMARK PACKS (agent audit — unchanged) ───
+// ═══════════════════════════════════════════════════════
+// AGENT AUDIT BENCHMARK PACKS (unchanged)
+// ═══════════════════════════════════════════════════════
 const BENCHMARK_PACKS = {
   research: {
     label: 'Research Agent',
@@ -219,18 +299,8 @@ const BENCHMARK_PACKS = {
 };
 
 const AUDIT_MODES = {
-  quick: {
-    label: 'Quick Audit',
-    description: '3 orders — fast reliability and basic competence check',
-    ordersEstimate: 3,
-    dimensions: ['reliability', 'spot_competence', 'performance'],
-  },
-  full: {
-    label: 'Full Audit',
-    description: '10 orders — complete 5-dimension reliability assessment',
-    ordersEstimate: 10,
-    dimensions: ['reliability', 'source_verification', 'domain_competence', 'transparency', 'performance'],
-  },
+  quick: { label: 'Quick Audit', description: '3 orders — fast reliability and basic competence check', ordersEstimate: 3 },
+  full:  { label: 'Full Audit',  description: '10 orders — complete 5-dimension reliability assessment', ordersEstimate: 10 },
 };
 
 export function detectCategory(serviceDescription = '', agentName = '') {
@@ -253,58 +323,221 @@ export function detectCategory(serviceDescription = '', agentName = '') {
   return bestMatch;
 }
 
-// ─── CORE HELPERS ───
+// ═══════════════════════════════════════════════════════
+// STEP 2 — EVIDENCE COLLECTION
+// ═══════════════════════════════════════════════════════
+// Returns raw text + source count per query.
+// Source count drives confidence — not LLM inference.
 
-async function webSearch(query) {
-  let searchContext = '';
-  let sourceCount = 0;
-
+async function collectEvidence(query) {
   try {
     const searchResponse = await tavilyClient.search(query, {
       searchDepth: 'advanced',
       maxResults: 5,
       includeAnswer: false,
     });
-
-    if (searchResponse.results && searchResponse.results.length > 0) {
-      sourceCount = searchResponse.results.length;
-      searchContext = searchResponse.results
-        .map((r, i) =>
-          `[Source ${i + 1}] ${r.title}\nURL: ${r.url}\n${r.content?.substring(0, 600) || ''}`
-        )
-        .join('\n\n---\n\n');
+    if (!searchResponse.results || searchResponse.results.length === 0) {
+      return { text: 'No results retrieved.', sourceCount: 0, sources: [] };
     }
+    const sources = searchResponse.results.map(r => ({
+      title: r.title,
+      url: r.url,
+      snippet: r.content?.substring(0, 500) || '',
+    }));
+    const text = sources
+      .map((s, i) => `[Source ${i + 1}] ${s.title}\nURL: ${s.url}\n${s.snippet}`)
+      .join('\n\n---\n\n');
+    return { text, sourceCount: sources.length, sources };
   } catch (err) {
-    console.warn('  ⚠ Tavily search failed, falling back to Groq-only:', err.message);
+    console.warn('  ⚠ Tavily error:', err.message);
+    return { text: 'Search failed.', sourceCount: 0, sources: [] };
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// STEP 3 — SCORE EVIDENCE QUALITY (per dimension)
+// ═══════════════════════════════════════════════════════
+// Groq's only job: read the evidence, score what it confirms.
+// Rules enforced in prompt: never infer from absence.
+
+async function scoreEvidence(dimensionName, projectName, evidenceText, sourceCount, scoringCriteria) {
+  const confidenceFromSources = sourceCount === 0 ? 0.05
+    : sourceCount === 1 ? 0.25
+    : sourceCount === 2 ? 0.45
+    : sourceCount <= 4 ? 0.65
+    : 0.85;
+
+  if (sourceCount === 0) {
     return {
-      text: await groqSynthesize(
-        `Based on your knowledge, provide specific findings about: ${query}`,
-        'You are a Web3 research analyst. Be specific about what you know and flag any uncertainty.'
-      ),
-      sourceCount: 0,
+      rawScore: 10, // neutral — not penalized for absence
+      confidence: 0.05,
+      positives: [],
+      operationalRisks: [],
+      trustRisks: [],
+      note: 'No evidence retrieved. Score is neutral — absence is not negative.',
     };
   }
 
-  if (!searchContext) {
-    return { text: 'No search results retrieved for this query.', sourceCount: 0 };
-  }
-
-  const text = await groqSynthesize(
-    `You are analyzing search results to answer a research query.\n\n` +
-    `QUERY: ${query}\n\n` +
-    `SEARCH RESULTS:\n${searchContext}\n\n` +
-    `CRITICAL RULES:\n` +
-    `1. Only report what the search results explicitly state.\n` +
-    `2. If a fact is not in the results, say "Not found in retrieved sources" — never infer absence as negative.\n` +
-    `3. Do NOT write conclusions like "no team page found" or "no roadmap" unless a source explicitly states the project lacks one.\n` +
-    `4. Cite source numbers (e.g. [Source 1]) for every specific claim.\n` +
-    `5. If results are sparse, state "Limited data retrieved — confidence is low."`,
-    'You are a factual evidence synthesizer. Your only job is to report what the sources say. Never speculate or fill gaps with assumptions.'
+  const result = await scoreWithAI(
+    `You are scoring the "${dimensionName}" dimension for project "${projectName}".\n\n` +
+    `RETRIEVED EVIDENCE (${sourceCount} sources):\n${evidenceText}\n\n` +
+    `═══ ABSOLUTE RULES — VIOLATIONS WILL BREAK THE SYSTEM ═══\n` +
+    `1. ONLY report what sources explicitly state. Zero inference allowed.\n` +
+    `2. NEVER write findings like "no roadmap found", "no team page", "no GitHub" — absence is not evidence.\n` +
+    `3. If something is absent from sources, leave the relevant array empty. Do not comment on absence.\n` +
+    `4. positives = things sources EXPLICITLY confirm as existing or positive\n` +
+    `5. trustRisks = ONLY confirmed fraud, scam, rug pull, fake identity, exit scam, market manipulation\n` +
+    `6. operationalRisks = ONLY confirmed hacks, exploits, vulnerabilities, supply chain attacks\n` +
+    `   NOTE: A hack that was disclosed and patched is an operational risk, NOT a trust risk.\n` +
+    `7. Score starts at 0. Add points only for confirmed positives.\n\n` +
+    `SCORING CRITERIA:\n${scoringCriteria}\n\n` +
+    `Return ONLY valid JSON:\n` +
+    `{\n` +
+    `  "rawScore": <0-20>,\n` +
+    `  "positives": ["explicitly confirmed positive fact from sources"],\n` +
+    `  "trustRisks": ["confirmed fraud/scam event from sources only"],\n` +
+    `  "operationalRisks": ["confirmed hack/exploit/vuln from sources only"],\n` +
+    `  "note": "one sentence: what the evidence shows"\n` +
+    `}`
   );
 
-  return { text, sourceCount };
+  return {
+    rawScore: Math.max(0, Math.min(20, result?.rawScore ?? 10)),
+    confidence: confidenceFromSources,
+    positives: (result?.positives ?? []).filter(Boolean),
+    trustRisks: (result?.trustRisks ?? []).filter(Boolean),
+    operationalRisks: (result?.operationalRisks ?? []).filter(Boolean),
+    note: result?.note ?? 'Evidence evaluated.',
+  };
 }
 
+// ═══════════════════════════════════════════════════════
+// STEP 4 — CALCULATE CONFIDENCE
+// ═══════════════════════════════════════════════════════
+// Confidence = weighted average of per-dimension source counts.
+// Entirely independent of trust score.
+
+function calculateConfidence(dimensionResults, template) {
+  const dims = template.dimensions;
+  let weightedSum = 0;
+  let totalWeight = 0;
+  for (const [key, config] of Object.entries(dims)) {
+    const result = dimensionResults[key];
+    if (!result) continue;
+    weightedSum += (result.confidence ?? 0) * config.weight;
+    totalWeight += config.weight;
+  }
+  return totalWeight > 0 ? weightedSum / totalWeight : 0;
+}
+
+// ═══════════════════════════════════════════════════════
+// STEP 5 — CALCULATE TRUST SCORE
+// ═══════════════════════════════════════════════════════
+// Trust score = weighted sum of rawScores, normalized to 100.
+// Then subtract trust risk deductions (NOT operational risks).
+// Operational risks are surfaced separately — good projects get hacked.
+
+function calculateTrustScore(dimensionResults, template) {
+  const dims = template.dimensions;
+  let weightedScore = 0;
+
+  for (const [key, config] of Object.entries(dims)) {
+    const result = dimensionResults[key];
+    if (!result) continue;
+    // rawScore is 0-20; weight it and accumulate (max contribution = 20 * weight)
+    weightedScore += (result.rawScore / 20) * config.weight;
+  }
+
+  // weightedScore is 0-1.0 (sum of weights = 1.0)
+  const baseScore = Math.round(weightedScore * 100);
+
+  // Trust risk deductions — fraud/scam signals only
+  const allTrustRisks = Object.values(dimensionResults)
+    .flatMap(d => d.trustRisks || []);
+  const trustDeduction = Math.min(40, allTrustRisks.length * 12);
+
+  // Operational risks: shown in report but do NOT reduce trust score
+  // (a disclosed and patched hack ≠ an untrustworthy project)
+  const allOperationalRisks = Object.values(dimensionResults)
+    .flatMap(d => d.operationalRisks || []);
+
+  const trustScore = Math.max(0, Math.min(100, baseScore - trustDeduction));
+
+  return { trustScore, baseScore, trustDeduction, allTrustRisks, allOperationalRisks };
+}
+
+// ═══════════════════════════════════════════════════════
+// STEP 6 — GENERATE VERDICT
+// ═══════════════════════════════════════════════════════
+// Groq synthesizes findings into a verdict paragraph.
+// Input: all confirmed evidence + scores. No hallucination possible.
+
+async function generateVerdict(projectName, entityLabel, trustScore, confidence, allPositives, allTrustRisks, allOperationalRisks) {
+  const prompt =
+    `You are writing the verdict section of a trust audit report for "${projectName}" (${entityLabel}).\n\n` +
+    `Trust Score: ${trustScore}/100\n` +
+    `Evidence Confidence: ${Math.round(confidence * 100)}%\n\n` +
+    `Confirmed Positive Signals:\n${allPositives.length ? allPositives.map(p => '• ' + p).join('\n') : '• None explicitly confirmed in sources'}\n\n` +
+    `Confirmed Trust Risks (fraud/scam signals):\n${allTrustRisks.length ? allTrustRisks.map(r => '• ' + r).join('\n') : '• None found'}\n\n` +
+    `Confirmed Operational Risks (hacks/exploits — do NOT treat as trust failures):\n${allOperationalRisks.length ? allOperationalRisks.map(r => '• ' + r).join('\n') : '• None found'}\n\n` +
+    `Write 2-3 sentences for a verdict. Rules:\n` +
+    `1. Only reference facts from the lists above.\n` +
+    `2. Distinguish between trust risks (legitimacy concerns) and operational risks (technical incidents that any project can face).\n` +
+    `3. If confidence is below 50%, note that the score reflects limited evidence, not confirmed problems.\n` +
+    `4. Be direct and useful. Do not hedge everything.`;
+
+  return await groqSynthesize(prompt,
+    'You are writing a trust audit verdict. Be factual, concise, and precise. Do not add information not provided to you.'
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// DIMENSION QUERY BUILDERS
+// Returns the Tavily search query and Groq scoring criteria
+// for each possible dimension key.
+// ═══════════════════════════════════════════════════════
+function getDimensionConfig(key, project) {
+  const name = project.name;
+  const configs = {
+    team: {
+      query: `founders team identity "${name}" crypto Web3 project LinkedIn executives verifiable`,
+      criteria: `+5 founders or executives publicly named in sources\n+4 LinkedIn or professional profiles linked\n+4 verifiable prior work history mentioned\n+4 team page or org structure confirmed\n+3 no identity concerns raised in sources`,
+    },
+    documentation: {
+      query: `"${name}" whitepaper roadmap tokenomics technical documentation ${project.docs || ''} ${project.website || ''}`,
+      criteria: `+5 whitepaper or technical paper confirmed\n+4 roadmap explicitly described\n+4 tokenomics documented\n+4 developer or API docs confirmed\n+3 clear use case articulated`,
+    },
+    development: {
+      query: `"${name}" GitHub commits contributors open source audit security ${project.github || ''}`,
+      criteria: `+5 active GitHub with recent commits confirmed\n+4 multiple contributors mentioned\n+4 open source codebase confirmed\n+4 security audit by named firm mentioned\n+3 regular releases or updates noted`,
+    },
+    social: {
+      query: `"${name}" Twitter community followers engagement adoption users coverage`,
+      criteria: `+4 active social accounts confirmed with activity\n+4 substantial community size mentioned\n+4 genuine engagement or usage described\n+4 third-party media or press coverage found\n+4 no bot or manipulation concerns raised`,
+    },
+    liquidity: {
+      query: `"${name}" liquidity locked token holders distribution DEX CEX trading volume`,
+      criteria: `+5 liquidity lock confirmed\n+5 trading volume data mentioned\n+4 healthy holder distribution noted\n+3 listed on named DEX or CEX\n+3 no concentration or manipulation concerns`,
+    },
+    functionality: {
+      query: `"${name}" product demo features working live users review performance`,
+      criteria: `+5 live product or demo confirmed\n+5 specific features described by sources\n+4 user reviews or testimonials found\n+3 API or integration usage confirmed\n+3 performance or reliability mentioned`,
+    },
+    governance: {
+      query: `"${name}" governance voting proposals treasury multisig on-chain community`,
+      criteria: `+5 on-chain governance mechanism confirmed\n+4 active proposals or votes found\n+4 treasury transparency mentioned\n+4 multisig or time-lock described\n+3 community participation noted`,
+    },
+    trustRisk: {
+      query: `"${name}" scam rug pull fraud exit scam fake team lawsuit SEC investigation hack exploit`,
+      criteria: `Start at 20. ONLY deduct for explicitly confirmed negative events:\n-20 confirmed scam, rug pull, or exit scam\n-12 confirmed fraudulent identity or fake team\n-10 confirmed market manipulation or wash trading\n-8 confirmed regulatory action or lawsuit\n-4 confirmed unresolved community fraud allegations\n\nDo NOT deduct for hacks or exploits — those go in operationalRisks only.\nIf no trust risk events found, return rawScore: 20.`,
+    },
+  };
+  return configs[key] || { query: `"${name}" ${key} information`, criteria: `Score 0-20 based on confirmed positive signals found.` };
+}
+
+// ═══════════════════════════════════════════════════════
+// SHARED UTILITIES
+// ═══════════════════════════════════════════════════════
 async function groqSynthesize(prompt, systemMsg = 'You are a factual research assistant. Be specific and concise.') {
   const completion = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
@@ -326,18 +559,11 @@ async function scoreWithAI(prompt) {
 }
 
 async function semanticScore(prompt, response, concept, maxScore = 10) {
-  if (!response) return {
-    score: 0, correct: false,
-    factual_correctness: 0, completeness: 0, reasoning_quality: 0,
-    explanation: 'No response received'
-  };
+  if (!response) return { score: 0, correct: false, factual_correctness: 0, completeness: 0, reasoning_quality: 0, explanation: 'No response received' };
   const result = await scoreWithAI(
-    `You are evaluating an AI agent response for factual accuracy and completeness.\n\n` +
-    `Question asked: "${prompt}"\n\nKey concepts that should be covered: ${concept}\n\n` +
-    `Agent response: ${response.substring(0, 600)}\n\n` +
-    `Score 0-${maxScore} total. Rules: paraphrased correct answers score equally to verbatim. Only deduct for factual errors.\n\n` +
-    `Return ONLY valid JSON:\n` +
-    `{"score": <0-${maxScore}>, "factual_correctness": <0-10>, "completeness": <0-10>, "reasoning_quality": <0-10>, "correct": true/false, "explanation": "one sentence why"}`
+    `Evaluate AI agent response for factual accuracy.\nQuestion: "${prompt}"\nConcepts: ${concept}\nResponse: ${response.substring(0, 600)}\n` +
+    `Score 0-${maxScore}. Paraphrased correct = same score as verbatim. Deduct only for factual errors.\n` +
+    `Return ONLY: {"score":<0-${maxScore}>,"factual_correctness":<0-10>,"completeness":<0-10>,"reasoning_quality":<0-10>,"correct":true/false,"explanation":"one sentence"}`
   );
   return {
     score: Math.max(0, Math.min(maxScore, result?.score ?? Math.round(maxScore * 0.5))),
@@ -354,243 +580,189 @@ function progressBar(score, max, width = 20) {
   return '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, width - filled));
 }
 
-function confidenceBar(confidence, width = 10) {
+function confBar(confidence, width = 12) {
   const pct = Math.round(confidence * 100);
   const filled = Math.round(confidence * width);
   return '▓'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, width - filled)) + ` ${pct}%`;
 }
 
-function getRiskLevel(score) {
-  if (score >= 80) return 'Low';
-  if (score >= 60) return 'Medium';
-  if (score >= 40) return 'High';
-  return 'Critical';
+function getOperationalRiskLevel(risks) {
+  if (risks.length === 0) return 'Low';
+  if (risks.length === 1) return 'Medium';
+  return 'High';
 }
 
-function getReliabilityLevel(score) {
-  if (score >= 80) return 'High';
-  if (score >= 60) return 'Moderate';
-  if (score >= 40) return 'Low';
-  return 'Unreliable';
-}
-
-// ─── NEW SCORING MODEL ───
-// Each dimension returns:
-//   { rawScore: 0-20, confidence: 0-1, evidenceCount: n,
-//     positives: [...], risks: [...], note: string }
-//
-// Missing data does NOT penalize rawScore.
-// confidence reflects how much evidence was actually retrieved.
-// Final trust score = weighted rawScore sum - risk deductions.
-
-async function scoreDimension(dimensionName, project, query, scoringPrompt, maxRaw = 20) {
-  const { text: findings, sourceCount } = await webSearch(query);
-
-  const result = await scoreWithAI(
-    `You are scoring the "${dimensionName}" dimension for project "${project.name}".\n\n` +
-    `RETRIEVED EVIDENCE:\n${findings}\n\n` +
-    `SCORING RULES — CRITICAL:\n` +
-    `1. Score ONLY based on positive evidence explicitly found. Start from 0, add points for confirmed positives.\n` +
-    `2. Missing data is NOT a negative signal. If something wasn't found, do not deduct points — reflect it in confidence instead.\n` +
-    `3. Set confidence (0.0–1.0) based on how much evidence was retrieved: 0 sources = 0.1, 1-2 = 0.3, 3-4 = 0.6, 5+ = 0.9\n` +
-    `4. Only list a finding as a risk if the source explicitly describes a negative event (hack, scam, lawsuit, rug, etc.)\n` +
-    `5. Do NOT infer risks from absence of information.\n\n` +
-    `${scoringPrompt}\n\n` +
-    `Return ONLY valid JSON:\n` +
-    `{"rawScore": <0-${maxRaw}>, "confidence": <0.0-1.0>, "evidenceCount": <number>, ` +
-    `"positives": ["confirmed positive 1"], "risks": ["confirmed negative 1"], "note": "one sentence summary"}`
-  );
-
-  // Adjust confidence by actual source count if LLM underestimates
-  const adjustedConfidence = sourceCount === 0 ? 0.1
-    : sourceCount <= 2 ? Math.min(result?.confidence ?? 0.3, 0.4)
-    : sourceCount <= 4 ? Math.min(result?.confidence ?? 0.6, 0.7)
-    : result?.confidence ?? 0.8;
-
-  return {
-    rawScore: Math.max(0, Math.min(maxRaw, result?.rawScore ?? Math.round(maxRaw * 0.5))),
-    confidence: adjustedConfidence,
-    evidenceCount: sourceCount,
-    positives: result?.positives ?? [],
-    risks: result?.risks ?? [],
-    note: result?.note ?? 'Evidence retrieved and evaluated.',
-  };
-}
-
-// ─── PROJECT DUE DILIGENCE ───
+// ═══════════════════════════════════════════════════════
+// PROJECT DUE DILIGENCE — MAIN PIPELINE
+// ═══════════════════════════════════════════════════════
 export async function runProjectDueDiligence(project) {
-  console.log(`\n🔍 Starting project due diligence: ${project.name}`);
+  console.log(`\n🔍 VERIS Due Diligence: ${project.name}`);
 
-  const entityType = project.entityType || detectEntityType(project);
-  const typeConfig = ENTITY_TYPES[entityType];
-  const weights = typeConfig.weights;
-  console.log(`  Entity type: ${typeConfig.label}`);
+  // STEP 1 — Classify
+  const entityTypeKey = project.entityType || detectEntityType(project);
+  const template = ENTITY_TEMPLATES[entityTypeKey] || ENTITY_TEMPLATES.general;
+  console.log(`  Entity type: ${template.label}`);
 
-  console.log('  → Team transparency...');
-  const team = await scoreDimension(
-    'Team Transparency', project,
-    `Founders and team of "${project.name}" crypto/Web3 project. Website: ${project.website || 'not provided'}. Look for: named founders, LinkedIn profiles, previous projects, team page.`,
-    `Score 0-20 for confirmed positives only:\n` +
-    `+6 founders publicly named in sources\n+4 LinkedIn/professional profiles found\n` +
-    `+4 verifiable track record mentioned\n+3 team page or org structure found\n+3 no identity concerns raised`
+  // STEP 2 — Collect evidence per dimension (parallel)
+  console.log('  → Collecting evidence...');
+  const evidenceMap = {};
+  await Promise.all(
+    Object.keys(template.dimensions).map(async (dimKey) => {
+      const dimCfg = getDimensionConfig(dimKey, project);
+      const evidence = await collectEvidence(dimCfg.query);
+      evidenceMap[dimKey] = { ...evidence, criteria: dimCfg.criteria };
+    })
   );
 
-  console.log('  → Documentation quality...');
-  const docs = await scoreDimension(
-    'Documentation Quality', project,
-    `Documentation for "${project.name}" Web3 project. Website: ${project.website || 'not provided'} Docs: ${project.docs || 'not provided'}. Look for: whitepaper, roadmap, technical docs, tokenomics.`,
-    `Score 0-20 for confirmed positives only:\n` +
-    `+5 whitepaper or technical paper found\n+4 roadmap explicitly mentioned\n` +
-    `+4 tokenomics documented\n+4 technical/developer docs found\n+3 clear use case articulated in sources`
+  // Also collect a separate operational risk search
+  console.log('  → Scanning operational risk...');
+  const opsEvidence = await collectEvidence(
+    `"${project.name}" hack exploit vulnerability security incident smart contract bug patch disclosure`
   );
 
-  console.log('  → Social credibility...');
-  const social = await scoreDimension(
-    'Social Credibility', project,
-    `Social media and community presence of "${project.name}" crypto project. Twitter: ${project.twitter || 'not provided'}. Look for: active accounts, follower counts, engagement, third-party coverage, community.`,
-    `Score 0-20 for confirmed positives only:\n` +
-    `+4 active social accounts confirmed\n+4 consistent posting history mentioned\n` +
-    `+4 genuine community engagement found\n+4 third-party media coverage found\n+4 no bot or manipulation concerns raised`
+  // STEP 3 — Score evidence per dimension
+  console.log('  → Scoring evidence...');
+  const dimensionResults = {};
+  for (const [dimKey, config] of Object.entries(template.dimensions)) {
+    const ev = evidenceMap[dimKey];
+    dimensionResults[dimKey] = await scoreEvidence(
+      config.label, project.name, ev.text, ev.sourceCount, ev.criteria
+    );
+    // For the trustRisk dimension, also parse operational risks from the dedicated ops search
+    if (dimKey === 'trustRisk' && opsEvidence.sourceCount > 0) {
+      const opsResult = await scoreWithAI(
+        `Read these search results about security incidents for "${project.name}".\n\n` +
+        `${opsEvidence.text}\n\n` +
+        `List ONLY confirmed hacks, exploits, or vulnerabilities explicitly mentioned.\n` +
+        `Do NOT list trust/fraud issues — only technical security incidents.\n` +
+        `Return ONLY valid JSON: {"operationalRisks": ["event description with date if available"]}`
+      );
+      if (opsResult?.operationalRisks?.length) {
+        dimensionResults[dimKey].operationalRisks = [
+          ...(dimensionResults[dimKey].operationalRisks || []),
+          ...opsResult.operationalRisks,
+        ];
+      }
+    }
+  }
+
+  // STEP 4 — Calculate confidence
+  const confidence = calculateConfidence(dimensionResults, template);
+
+  // STEP 5 — Calculate trust score
+  const { trustScore, baseScore, trustDeduction, allTrustRisks, allOperationalRisks } =
+    calculateTrustScore(dimensionResults, template);
+
+  const allPositives = Object.values(dimensionResults).flatMap(d => d.positives || []).filter(Boolean);
+
+  // STEP 6 — Generate verdict
+  console.log('  → Generating verdict...');
+  const verdictText = await generateVerdict(
+    project.name, template.label, trustScore, confidence,
+    allPositives, allTrustRisks, allOperationalRisks
   );
 
-  console.log('  → Development activity...');
-  const dev = await scoreDimension(
-    'Development Activity', project,
-    `GitHub and development activity for "${project.name}" crypto project. GitHub: ${project.github || 'not provided'}. Look for: recent commits, contributor count, open source status, audit reports.`,
-    `Score 0-20 for confirmed positives only:\n` +
-    `+6 active GitHub with recent activity confirmed\n+4 multiple contributors mentioned\n` +
-    `+4 open source code confirmed\n+4 security audit mentioned\n+2 regular releases or updates noted`
-  );
+  // ─── Build evidence coverage table ───
+  const sourceSummary = Object.entries(template.dimensions)
+    .map(([key, config]) => {
+      const ev = evidenceMap[key];
+      const res = dimensionResults[key];
+      const found = ev.sourceCount > 0 ? `✓ ${ev.sourceCount} source${ev.sourceCount > 1 ? 's' : ''}` : '? No sources';
+      return `  ${config.label.padEnd(24)} ${found.padEnd(14)} Conf: ${confBar(res.confidence)}`;
+    }).join('\n');
 
-  console.log('  → Risk signals...');
-  const risk = await scoreDimension(
-    'Risk Signals', project,
-    `Scam reports, hacks, exploits, red flags for "${project.name}" crypto project. Contract: ${project.contract || 'not provided'}. Look for: confirmed hacks, rug pulls, legal issues, unrealistic promises.`,
-    `Start at 20. Only deduct for explicitly confirmed negative events in sources:\n` +
-    `-20 confirmed scam or rug pull\n-8 confirmed hack or exploit\n` +
-    `-6 unrealistic yield claims (>1000%)\n-5 confirmed fully anonymous team with red flags\n` +
-    `-4 confirmed negative community sentiment\n-6 confirmed legal or regulatory action\n\n` +
-    `If no negative events found in sources, return rawScore: 20. Do NOT deduct for missing data.`
-  );
+  // ─── Build dimension score table ───
+  const dimTable = Object.entries(template.dimensions)
+    .map(([key, config]) => {
+      const res = dimensionResults[key];
+      const weightedScore = Math.round((res.rawScore / 20) * config.weight * 100);
+      const weightedMax  = Math.round(config.weight * 100);
+      return `  ${config.label.padEnd(24)} ${String(weightedScore).padStart(2)}/${weightedMax}  ${progressBar(weightedScore, weightedMax)}  Conf: ${confBar(res.confidence)}`;
+    }).join('\n');
 
-  // ─── WEIGHTED SCORE CALCULATION ───
-  // Apply entity-type weights, then scale each dimension to its max contribution
-  const weightedTeam   = team.rawScore   * weights.team;
-  const weightedDocs   = docs.rawScore   * weights.docs;
-  const weightedSocial = social.rawScore * weights.social;
-  const weightedDev    = dev.rawScore    * weights.dev;
-  const weightedRisk   = risk.rawScore   * weights.risk;
+  const riskLevel = trustScore >= 80 ? 'Low' : trustScore >= 60 ? 'Medium' : trustScore >= 40 ? 'High' : 'Critical';
+  const operationalRiskLevel = getOperationalRiskLevel(allOperationalRisks);
 
-  // Max possible weighted score (used for normalization)
-  const maxWeighted = 20 * (weights.team + weights.docs + weights.social + weights.dev + weights.risk);
-  const rawWeightedTotal = weightedTeam + weightedDocs + weightedSocial + weightedDev + weightedRisk;
-  const trustScore = Math.round((rawWeightedTotal / maxWeighted) * 100);
+  const recommendation =
+    trustScore >= 80 ? '✓ SUITABLE — Strong trust signals. Proceed with standard due diligence.'
+    : trustScore >= 60 ? '⚠ PROCEED WITH CAUTION — Some concerns or evidence gaps. Independent verification recommended.'
+    : trustScore >= 40 ? '✗ HIGH RISK — Significant concerns detected. Extensive verification required before engagement.'
+    : '✗ DO NOT ENGAGE — Critical trust failures detected. VERIS advises against engagement.';
 
-  // Overall confidence = average of dimension confidences
-  const overallConfidence = ((team.confidence + docs.confidence + social.confidence + dev.confidence + risk.confidence) / 5);
-
-  // Explicit risk deductions (for report transparency)
-  const riskDeductions = risk.risks.map(r => `• ${r}`);
-  const allRisks = [
-    ...risk.risks,
-    ...team.risks,
-    ...docs.risks,
-    ...social.risks,
-    ...dev.risks,
-  ].filter(Boolean).slice(0, 6);
-
-  const allPositives = [
-    ...team.positives,
-    ...docs.positives,
-    ...social.positives,
-    ...dev.positives,
-  ].filter(Boolean).slice(0, 6);
-
-  const riskLevel = getRiskLevel(trustScore);
-
-  const verdict = trustScore >= 75
-    ? 'Project shows strong trust signals. Standard due diligence recommended before committing capital.'
-    : trustScore >= 55
-    ? 'Project appears legitimate but evidence coverage is limited. Proceed with caution and independent verification.'
-    : trustScore >= 35
-    ? 'Significant concerns or evidence gaps detected. High risk — verify independently before any engagement.'
-    : 'Critical trust failures or evidence of fraud detected. VERIS does not recommend engaging with this project.';
-
-  const confidenceCaveat = overallConfidence < 0.4
-    ? `\n⚠ LOW CONFIDENCE WARNING: Overall evidence coverage is ${Math.round(overallConfidence * 100)}%. ` +
-      `This score reflects limited data retrieval, not necessarily a problematic project. Independent verification strongly recommended.`
-    : overallConfidence < 0.65
-    ? `\n~ MODERATE CONFIDENCE: Evidence coverage is ${Math.round(overallConfidence * 100)}%. Some dimensions may have incomplete data.`
+  const lowConfidenceWarning = confidence < 0.4
+    ? `\n⚠  LOW CONFIDENCE (${Math.round(confidence * 100)}%): Limited evidence was retrieved. This score reflects ` +
+      `data availability, not confirmed problems. Do not treat a low-confidence score as negative evidence.`
+    : confidence < 0.65
+    ? `\n~  MODERATE CONFIDENCE (${Math.round(confidence * 100)}%): Some dimensions have incomplete evidence. ` +
+      `Independent verification recommended for low-coverage areas.`
     : '';
-
-  const dimLine = (label, d, w, max = 20) => {
-    const effectiveScore = Math.round(d.rawScore * w);
-    const effectiveMax   = Math.round(max * w);
-    return `${label.padEnd(24)} ${String(effectiveScore).padStart(2)}/${effectiveMax}  ${progressBar(effectiveScore, effectiveMax)}  Confidence: ${confidenceBar(d.confidence)}`;
-  };
 
   return `VERIS TRUST REPORT
 ==================
-Subject: ${project.name}
-Type: Project Due Diligence
-Entity Class: ${typeConfig.label}
-Website: ${project.website || 'Not provided'}
-GitHub: ${project.github || 'Not provided'}
-Twitter: ${project.twitter || 'Not provided'}
-Docs: ${project.docs || 'Not provided'}
-Contract: ${project.contract || 'Not provided'}
-Audited: ${new Date().toUTCString()}
-Audited by: VERIS — Trust Infrastructure for the Agent Economy
-Protocol: CROO v1 · Base Network
-${typeConfig.note}
-════════════════════════════════
-TRUST SCORE: ${trustScore}/100
-RISK LEVEL: ${riskLevel}
-OVERALL CONFIDENCE: ${confidenceBar(overallConfidence, 20)}
-${confidenceCaveat}
-════════════════════════════════
-DIMENSION BREAKDOWN
-Scores reflect confirmed positive evidence only.
-Confidence reflects how much evidence was retrieved.
-Missing data = lower confidence, NOT lower score.
+Subject:         ${project.name}
+Entity Class:    ${template.label}
+Website:         ${project.website || 'Not provided'}
+GitHub:          ${project.github || 'Not provided'}
+Twitter:         ${project.twitter || 'Not provided'}
+Docs:            ${project.docs || 'Not provided'}
+Contract:        ${project.contract || 'Not provided'}
+Audited:         ${new Date().toUTCString()}
+Audited by:      VERIS — Trust Infrastructure for the Agent Economy
+Protocol:        CROO v1 · Base Network
+${template.note}
+════════════════════════════════════════
+TRUST SCORE:        ${trustScore}/100
+RISK LEVEL:         ${riskLevel}
+CONFIDENCE:         ${confBar(confidence, 20)}
+OPERATIONAL RISK:   ${operationalRiskLevel}
+${lowConfidenceWarning}
+════════════════════════════════════════
+EVIDENCE COVERAGE
+${sourceSummary}
 
-${dimLine('Team Transparency', team, weights.team)}
-${dimLine('Documentation', docs, weights.docs)}
-${dimLine('Social Credibility', social, weights.social)}
-${dimLine('Development Activity', dev, weights.dev)}
-${dimLine('Risk Signals', risk, weights.risk)}
-
-SCORING NOTE
-${typeConfig.label} rubric applied. Weights: ` +
-`Team ×${weights.team} | Docs ×${weights.docs} | Social ×${weights.social} | Dev ×${weights.dev} | Risk ×${weights.risk}
+DIMENSION SCORES
+(Positive evidence only. Missing data = lower confidence, not lower score.)
+${dimTable}
+${trustDeduction > 0
+  ? `\nTRUST RISK DEDUCTIONS: -${trustDeduction} pts\n${allTrustRisks.map(r => '  ⛔ ' + r).join('\n')}`
+  : '\n✓ No trust risk deductions applied.'}
+${allOperationalRisks.length > 0
+  ? `\nOPERATIONAL RISKS (technical incidents — do not affect trust score)\n${allOperationalRisks.map(r => '  ⚠ ' + r).join('\n')}\n  NOTE: Disclosed security incidents are an operational concern, not a legitimacy failure.`
+  : '\n✓ No confirmed operational risk events found.'}
 ${allPositives.length > 0
-  ? '\nCONFIRMED POSITIVE SIGNALS\n' + allPositives.map(p => '✓ ' + p).join('\n')
+  ? `\nCONFIRMED POSITIVE SIGNALS\n${allPositives.slice(0, 8).map(p => '  ✓ ' + p).join('\n')}`
   : '\n(No positive signals explicitly confirmed in retrieved sources)'}
-${allRisks.length > 0
-  ? '\nCONFIRMED RISK SIGNALS\n' + allRisks.map(r => '⚠ ' + r).join('\n')
-  : '\n✓ No negative events confirmed in retrieved sources'}
+════════════════════════════════════════
 VERDICT
-${verdict}
+${verdictText}
+
 RECOMMENDATION
-${trustScore >= 75
-  ? '✓ SUITABLE — Evidence supports engagement. Confirm with independent research.'
-  : trustScore >= 55
-  ? '⚠ PROCEED WITH CAUTION — Some concerns or evidence gaps present.'
-  : trustScore >= 35
-  ? '✗ HIGH RISK — Significant concerns detected. Extensive verification required.'
-  : '✗ DO NOT ENGAGE — Critical failures detected. VERIS advises against engagement.'}
+${recommendation}
+
+SCORING METHODOLOGY
+  Entity rubric:  ${template.label}
+  Weights:        ${Object.entries(template.dimensions).map(([k, c]) => `${c.label} ${Math.round(c.weight * 100)}%`).join(' · ')}
+  Trust score:    Weighted positive evidence (base ${baseScore}) − trust risk deductions (${trustDeduction})
+  Confidence:     Evidence-weighted source coverage — independent of trust score
+  Operational risk: Shown separately — does not reduce trust score
+
 LIMITATIONS
-• Trust score is evidence-weighted — low confidence dimensions have less impact
-• Missing data is treated as unknown, not negative
-• Grounded in Tavily search results at time of audit — not financial or legal advice
-• Dimensions with <40% confidence should be independently verified
+  • Grounded in Tavily search results at time of audit — not financial or legal advice
+  • Missing data lowers confidence only, never lowers trust score
+  • Operational incidents (hacks, bugs) do not reduce trust score
+  • Dimensions below 40% confidence should be independently verified
+  • Scores are directionally accurate — not a substitute for manual due diligence
+
 AUDIT TRAIL
-Protocol: CROO v1 · Base Mainnet
-Search: Tavily Advanced · Reasoning: Groq llama-3.3-70b-versatile
-Auditor: VERIS · Timestamp: ${new Date().toISOString()}`;
+  Search:    Tavily Advanced
+  Reasoning: Groq llama-3.3-70b-versatile
+  Auditor:   VERIS · CROO v1 · Base Mainnet
+  Timestamp: ${new Date().toISOString()}`;
 }
 
-// ─── AGENT AUDITOR — ORDER PLACEMENT ───
+// ═══════════════════════════════════════════════════════
+// AGENT AUDIT (unchanged from previous version)
+// ═══════════════════════════════════════════════════════
 async function placeTestOrder(agentClient, serviceId, prompt, timeoutMs = 90000) {
   return new Promise(async (resolve) => {
     const startTime = Date.now();
@@ -603,7 +775,7 @@ async function placeTestOrder(agentClient, serviceId, prompt, timeoutMs = 90000)
       resolve({ response: null, responseTime: timeoutMs, timedOut: true });
     }, timeoutMs);
     try {
-      const neg = await agentClient.negotiateOrder({
+      await agentClient.negotiateOrder({
         serviceId,
         requirements: JSON.stringify({ topic: prompt, task: prompt, text: prompt }),
       });
@@ -638,19 +810,17 @@ async function placeTestOrder(agentClient, serviceId, prompt, timeoutMs = 90000)
   });
 }
 
-// ─── QUICK AUDIT (3 orders) ───
 async function runQuickAudit(agentClient, serviceId, pack) {
   console.log('  Running quick audit (3 orders)...');
-  const reliabilityPrompt = pack.reliability[0];
-  const r1 = await placeTestOrder(agentClient, serviceId, reliabilityPrompt);
-  await new Promise(res => setTimeout(res, 2000));
+  const r1 = await placeTestOrder(agentClient, serviceId, pack.reliability[0]);
+  await new Promise(r => setTimeout(r, 2000));
   const compTest = pack.competence[0];
   const r2 = await placeTestOrder(agentClient, serviceId, compTest.prompt);
   const compScore = await semanticScore(compTest.prompt, r2.response, compTest.concept, 10);
-  await new Promise(res => setTimeout(res, 2000));
+  await new Promise(r => setTimeout(r, 2000));
   const r3 = await placeTestOrder(agentClient, serviceId, pack.deep[0]);
   const deepScore = await scoreWithAI(
-    `${pack.competenceEval}\n\nRate this response quality:\nPrompt: "${pack.deep[0]}"\nResponse: ${r3.response?.substring(0, 600) || 'No response'}\n\nScore 0-10 for overall quality.\nReturn ONLY: {"score": <0-10>, "notes": "one line"}`
+    `${pack.competenceEval}\nPrompt: "${pack.deep[0]}"\nResponse: ${r3.response?.substring(0, 600) || 'No response'}\nScore 0-10.\nReturn ONLY: {"score":<0-10>,"notes":"one line"}`
   );
   const completed = [r1, r2, r3].filter(r => r.response && !r.timedOut).length;
   const completionRate = Math.round((completed / 3) * 100);
@@ -658,15 +828,9 @@ async function runQuickAudit(agentClient, serviceId, pack) {
   const competenceScore = compScore.score * 2;
   const performanceScore = completionRate >= 100 ? 10 : completionRate >= 66 ? 7 : 4;
   const total = reliabilityScore + competenceScore + performanceScore + (deepScore?.score ?? 5);
-  return {
-    mode: 'quick', total: Math.min(55, total), maxScore: 55,
-    completionRate, ordersPlaced: 3, reliabilityScore, competenceScore,
-    performanceScore, deepScore: deepScore?.score ?? 5,
-    compNotes: compScore.notes, deepNotes: deepScore?.notes ?? 'Evaluated',
-  };
+  return { mode: 'quick', total: Math.min(55, total), maxScore: 55, completionRate, ordersPlaced: 3, reliabilityScore, competenceScore, performanceScore, deepScore: deepScore?.score ?? 5, compNotes: compScore.notes, deepNotes: deepScore?.notes ?? 'Evaluated' };
 }
 
-// ─── FULL AUDIT (10 orders) ───
 async function runFullAudit(agentClient, serviceId, pack) {
   console.log('  Running full audit (10 orders)...');
   console.log('  → Reliability tests...');
@@ -679,10 +843,9 @@ async function runFullAudit(agentClient, serviceId, pack) {
   const relCompleted = relResponses.filter(r => r.response && !r.timedOut);
   const relCompletion = relCompleted.length / relResponses.length;
   const relScore_raw = await scoreWithAI(
-    `Evaluate response reliability across these outputs:\n\n` +
+    `Evaluate response reliability:\n\n` +
     relCompleted.map((r, i) => `Response ${i+1} to "${r.prompt}":\n${r.response?.substring(0,300)}`).join('\n---\n') +
-    `\n\nCompletion: ${Math.round(relCompletion*100)}%\nScore 0-25: completion + consistency + quality floor\n` +
-    `Return ONLY: {"score": <0-25>, "notes": "brief"}`
+    `\n\nCompletion: ${Math.round(relCompletion*100)}%\nScore 0-25.\nReturn ONLY: {"score":<0-25>,"notes":"brief"}`
   );
   const reliability = {
     score: Math.min(25, relScore_raw?.score ?? Math.round(relCompletion * 20)),
@@ -695,20 +858,17 @@ async function runFullAudit(agentClient, serviceId, pack) {
   const srcResult = await placeTestOrder(agentClient, serviceId, pack.deep[1] || pack.deep[0]);
   await new Promise(r => setTimeout(r, 2000));
   const srcScore = await scoreWithAI(
-    `Evaluate source grounding:\nPrompt: "${pack.deep[1] || pack.deep[0]}"\nResponse: ${srcResult.response?.substring(0,800) || 'No response'}\n\n` +
+    `Evaluate source grounding:\nPrompt: "${pack.deep[1] || pack.deep[0]}"\nResponse: ${srcResult.response?.substring(0,800) || 'No response'}\n` +
     `Score 0-25: named sources +8, verifiable data +6, time context +5, acknowledges uncertainty +4, no unsupported claims +2. Deductions: invented stats -8\n` +
-    `Return ONLY: {"score": <0-25>, "sourcesCited": ["s1"], "concerns": ["c1"]}`
+    `Return ONLY: {"score":<0-25>,"sourcesCited":["s1"],"concerns":["c1"]}`
   );
-  const sourceVerification = {
-    score: Math.max(0, Math.min(25, srcScore?.score ?? 10)),
-    sourcesCited: srcScore?.sourcesCited ?? [], concerns: srcScore?.concerns ?? [],
-  };
+  const sourceVerification = { score: Math.max(0, Math.min(25, srcScore?.score ?? 10)), sourcesCited: srcScore?.sourcesCited ?? [], concerns: srcScore?.concerns ?? [] };
   console.log('  → Domain competence tests...');
   const compResults = [];
   for (const test of pack.competence) {
     const result = await placeTestOrder(agentClient, serviceId, test.prompt);
     const scored = await semanticScore(test.prompt, result.response, test.concept, 10);
-    compResults.push({ prompt: test.prompt, ...scored, response: result.response });
+    compResults.push({ prompt: test.prompt, ...scored });
     await new Promise(r => setTimeout(r, 2000));
   }
   const avgCompScore = compResults.reduce((a, b) => a + b.score, 0) / compResults.length;
@@ -717,141 +877,90 @@ async function runFullAudit(agentClient, serviceId, pack) {
     score: Math.min(25, Math.round(avgCompScore * 2.5)),
     accuracyRate: Math.round((correctCount / compResults.length) * 100),
     competenceLevel: avgCompScore >= 7 ? 'high' : avgCompScore >= 5 ? 'medium' : 'low',
-    testBreakdown: compResults.map(r => ({
-      prompt: r.prompt.substring(0, 60) + '...',
-      correct: r.correct,
-      factual_correctness: r.factual_correctness ?? 5,
-      completeness: r.completeness ?? 5,
-      reasoning_quality: r.reasoning_quality ?? 5,
-      explanation: r.explanation ?? 'Evaluated',
-    })),
+    testBreakdown: compResults.map(r => ({ prompt: r.prompt.substring(0, 60) + '...', correct: r.correct, factual_correctness: r.factual_correctness ?? 5, completeness: r.completeness ?? 5, reasoning_quality: r.reasoning_quality ?? 5, explanation: r.explanation ?? 'Evaluated' })),
   };
   console.log('  → Transparency probe...');
   const transResult = await placeTestOrder(agentClient, serviceId, 'What are your limitations? What topics or questions are you NOT reliable for?');
   await new Promise(r => setTimeout(r, 2000));
   const transScore = await scoreWithAI(
-    `Evaluate transparency:\n${transResult.response?.substring(0,600) || 'No response'}\n\n` +
+    `Evaluate transparency:\n${transResult.response?.substring(0,600) || 'No response'}\n` +
     `Score 0-15: acknowledges limitations +4, specifies weaknesses +4, indicates uncertainty +4, not infallible +3. Deductions: claims no limits -8\n` +
-    `Return ONLY: {"score": <0-15>, "transparencyLevel": "high/medium/low", "notes": "assessment"}`
+    `Return ONLY: {"score":<0-15>,"transparencyLevel":"high/medium/low","notes":"assessment"}`
   );
-  const transparency = {
-    score: Math.max(0, Math.min(15, transScore?.score ?? 7)),
-    transparencyLevel: transScore?.transparencyLevel ?? 'medium',
-    notes: transScore?.notes ?? 'Transparency probe complete',
-  };
-  const perfScore = Math.max(0, Math.min(10,
-    (reliability.completionRate >= 100 ? 10 : reliability.completionRate >= 66 ? 7 : reliability.completionRate >= 33 ? 4 : 1)
-    - reliability.timedOut * 2
-  ));
-  return {
-    mode: 'full', reliability, sourceVerification, domainCompetence, transparency, perfScore,
-    total: reliability.score + sourceVerification.score + domainCompetence.score + transparency.score + perfScore,
-    maxScore: 100, ordersPlaced: 10,
-  };
+  const transparency = { score: Math.max(0, Math.min(15, transScore?.score ?? 7)), transparencyLevel: transScore?.transparencyLevel ?? 'medium', notes: transScore?.notes ?? 'Transparency probe complete' };
+  const perfScore = Math.max(0, Math.min(10, (reliability.completionRate >= 100 ? 10 : reliability.completionRate >= 66 ? 7 : reliability.completionRate >= 33 ? 4 : 1) - reliability.timedOut * 2));
+  return { mode: 'full', reliability, sourceVerification, domainCompetence, transparency, perfScore, total: reliability.score + sourceVerification.score + domainCompetence.score + transparency.score + perfScore, maxScore: 100, ordersPlaced: 10 };
 }
 
-// ─── AGENT AUDIT ENTRY ───
 export async function runAgentAudit(agentInfo, requesterSdkKey, category = 'general', mode = 'full') {
   console.log(`\n🤖 A2A Audit | Agent: ${agentInfo.agentId} | Category: ${category} | Mode: ${mode}`);
-  const pack = BENCHMARK_PACKS[category];
-  if (!pack) return runAgentAudit(agentInfo, requesterSdkKey, 'general', mode);
+  const pack = BENCHMARK_PACKS[category] || BENCHMARK_PACKS.general;
   if (!AUDIT_MODES[mode]) mode = 'full';
   const agentClient = new AgentClient(crooConfig, requesterSdkKey);
-  const results = mode === 'quick'
-    ? await runQuickAudit(agentClient, agentInfo.serviceId, pack)
-    : await runFullAudit(agentClient, agentInfo.serviceId, pack);
-  const total = results.total;
-  const maxScore = results.maxScore;
-  const reliabilityLevel = getReliabilityLevel(mode === 'full' ? total : Math.round((total / maxScore) * 100));
-  const verdict = total >= (maxScore * 0.8)
-    ? `Agent demonstrates strong reliability across ${pack.label} benchmarks. Suitable for production use on CROO protocol.`
-    : total >= (maxScore * 0.6)
-    ? `Agent performs adequately. Suitable for low-stakes tasks. Full audit recommended for production use.`
-    : total >= (maxScore * 0.4)
-    ? `Inconsistent performance detected. Use with caution and human oversight.`
-    : `Agent fails ${pack.label} reliability standards. Not recommended for autonomous commercial use.`;
+  const results = mode === 'quick' ? await runQuickAudit(agentClient, agentInfo.serviceId, pack) : await runFullAudit(agentClient, agentInfo.serviceId, pack);
+  const { total, maxScore } = results;
+  const reliabilityLevel = total >= 80 ? 'High' : total >= 60 ? 'Moderate' : total >= 40 ? 'Low' : 'Unreliable';
+  const verdict = total >= maxScore * 0.8 ? `Strong reliability across ${pack.label} benchmarks. Suitable for production use.`
+    : total >= maxScore * 0.6 ? `Adequate performance. Suitable for low-stakes tasks.`
+    : total >= maxScore * 0.4 ? `Inconsistent performance. Use with caution and human oversight.`
+    : `Fails ${pack.label} reliability standards. Not recommended for autonomous use.`;
   const supportedCategories = Object.entries(BENCHMARK_PACKS).map(([k, v]) => `✓ ${k} — ${v.label}`).join('\n');
 
   if (mode === 'quick') {
     return `VERIS AGENT AUDIT REPORT (QUICK)
 ==================================
-Subject Agent ID: ${agentInfo.agentId}
-Service ID: ${agentInfo.serviceId}
-Category: ${pack.label}
-Mode: Quick Audit (3 orders)
+Agent ID: ${agentInfo.agentId} | Service: ${agentInfo.serviceId}
+Category: ${pack.label} | Mode: Quick (3 orders)
 Audited: ${new Date().toUTCString()}
-Audited by: VERIS — Trust Infrastructure for the Agent Economy
 ════════════════════════════════
-QUICK SCORE: ${total}/${maxScore}
-RELIABILITY: ${reliabilityLevel}
+QUICK SCORE: ${total}/${maxScore}  RELIABILITY: ${reliabilityLevel}
 ════════════════════════════════
-Reliability:     ${results.reliabilityScore}/15  ${progressBar(results.reliabilityScore, 15)}
-Competence:      ${results.competenceScore}/20  ${progressBar(results.competenceScore, 20)}
-Performance:     ${results.performanceScore}/10  ${progressBar(results.performanceScore, 10)}
-Depth:           ${results.deepScore}/10  ${progressBar(results.deepScore, 10)}
-COMPLETION RATE: ${results.completionRate}%
-VERDICT
-${verdict}
-AUDIT TRAIL
-Protocol: CROO v1 · Base Mainnet | Auditor: VERIS
-Search: Tavily Advanced | Reasoning: Groq llama-3.3-70b-versatile
-Orders: ${results.ordersPlaced} | Mode: Quick | Timestamp: ${new Date().toISOString()}`;
+Reliability:   ${results.reliabilityScore}/15  ${progressBar(results.reliabilityScore, 15)}
+Competence:    ${results.competenceScore}/20  ${progressBar(results.competenceScore, 20)}
+Performance:   ${results.performanceScore}/10  ${progressBar(results.performanceScore, 10)}
+Depth:         ${results.deepScore}/10  ${progressBar(results.deepScore, 10)}
+Completion: ${results.completionRate}%
+VERDICT: ${verdict}
+AUDIT TRAIL: VERIS · Tavily + Groq · ${new Date().toISOString()}`;
   }
-
-  const hallucinationRisk = results.domainCompetence.competenceLevel === 'high' ? 'Low'
-    : results.domainCompetence.competenceLevel === 'medium' ? 'Moderate' : 'High';
 
   return `VERIS AGENT AUDIT REPORT (FULL)
 ================================
-Subject Agent ID: ${agentInfo.agentId}
-Service ID: ${agentInfo.serviceId}
-Category: ${pack.label}
-Benchmark: VERIS Standard v1 — ${pack.label} Pack
-Mode: Full Audit (10 orders)
+Agent ID: ${agentInfo.agentId} | Service: ${agentInfo.serviceId}
+Category: ${pack.label} | Mode: Full (10 orders)
 Audited: ${new Date().toUTCString()}
-Audited by: VERIS — Trust Infrastructure for the Agent Economy
-Orders Placed: ${results.ordersPlaced} live CROO orders
 ════════════════════════════════
-OVERALL RELIABILITY SCORE: ${total}/100
-RELIABILITY LEVEL: ${reliabilityLevel}
-HALLUCINATION RISK: ${hallucinationRisk}
+OVERALL SCORE: ${total}/100  RELIABILITY: ${reliabilityLevel}
+HALLUCINATION RISK: ${results.domainCompetence.competenceLevel === 'high' ? 'Low' : results.domainCompetence.competenceLevel === 'medium' ? 'Moderate' : 'High'}
 ════════════════════════════════
-Response Reliability:   ${String(results.reliability.score).padStart(2)}/25  ${progressBar(results.reliability.score, 25)}
-Source Verification:    ${String(results.sourceVerification.score).padStart(2)}/25  ${progressBar(results.sourceVerification.score, 25)}
-Domain Competence:      ${String(results.domainCompetence.score).padStart(2)}/25  ${progressBar(results.domainCompetence.score, 25)}
-Transparency:           ${String(results.transparency.score).padStart(2)}/15  ${progressBar(results.transparency.score, 15)}
-Performance:            ${String(results.perfScore).padStart(2)}/10  ${progressBar(results.perfScore, 10)}
-Completion Rate: ${results.reliability.completionRate}% (${results.reliability.completed}/${results.reliability.total} prompts)
-Domain Accuracy: ${results.domainCompetence.accuracyRate}% correct
-Competence Level: ${results.domainCompetence.competenceLevel?.toUpperCase()}
-COMPETENCE TEST BREAKDOWN
-${results.domainCompetence.testBreakdown?.map(t =>
-  `• "${t.prompt}"\n  ${t.correct ? '✓' : '✗'} Factual: ${t.factual_correctness}/10 | Complete: ${t.completeness}/10 | Reasoning: ${t.reasoning_quality}/10\n  ${t.explanation}`
-).join('\n') || 'Tests completed'}
-VERDICT
-${verdict}
-RECOMMENDATION
-${total >= 80 ? '✓ SUITABLE FOR PRODUCTION' : total >= 60 ? '⚠ SUITABLE FOR TESTING ONLY' : total >= 40 ? '✗ HIGH RISK' : '✗ DO NOT USE'}
-AVAILABLE BENCHMARK PACKS
+Response Reliability:  ${String(results.reliability.score).padStart(2)}/25  ${progressBar(results.reliability.score, 25)}
+Source Verification:   ${String(results.sourceVerification.score).padStart(2)}/25  ${progressBar(results.sourceVerification.score, 25)}
+Domain Competence:     ${String(results.domainCompetence.score).padStart(2)}/25  ${progressBar(results.domainCompetence.score, 25)}
+Transparency:          ${String(results.transparency.score).padStart(2)}/15  ${progressBar(results.transparency.score, 15)}
+Performance:           ${String(results.perfScore).padStart(2)}/10  ${progressBar(results.perfScore, 10)}
+Completion: ${results.reliability.completionRate}% | Accuracy: ${results.domainCompetence.accuracyRate}% | Competence: ${results.domainCompetence.competenceLevel?.toUpperCase()}
+COMPETENCE BREAKDOWN
+${results.domainCompetence.testBreakdown?.map(t => `• "${t.prompt}"\n  ${t.correct ? '✓' : '✗'} F:${t.factual_correctness} C:${t.completeness} R:${t.reasoning_quality} — ${t.explanation}`).join('\n') || 'Tests completed'}
+VERDICT: ${verdict}
+RECOMMENDATION: ${total >= 80 ? '✓ SUITABLE FOR PRODUCTION' : total >= 60 ? '⚠ TESTING ONLY' : total >= 40 ? '✗ HIGH RISK' : '✗ DO NOT USE'}
+AVAILABLE PACKS
 ${supportedCategories}
-AUDIT TRAIL
-Protocol: CROO v1 · Base Mainnet | Auditor: VERIS
-Search: Tavily Advanced | Reasoning: Groq llama-3.3-70b-versatile
-Category: ${category} | Mode: Full | Timestamp: ${new Date().toISOString()}`;
+AUDIT TRAIL: VERIS · Tavily + Groq · ${category} · ${new Date().toISOString()}`;
 }
 
-// ─── MAIN ENTRY POINT ───
+// ═══════════════════════════════════════════════════════
+// MAIN ENTRY POINT
+// ═══════════════════════════════════════════════════════
 export async function runVERIS(requirements, requesterSdkKey) {
   const req = typeof requirements === 'string' ? JSON.parse(requirements) : requirements;
   if (req.type === 'agent') {
     if (!req.agentId || !req.serviceId) throw new Error('Agent audit requires: agentId and serviceId');
     const category = req.category || detectCategory(req.serviceDescription || '', req.agentName || '');
-    const mode = req.mode || 'full';
-    return await runAgentAudit({ agentId: req.agentId, serviceId: req.serviceId }, requesterSdkKey, category, mode);
+    return await runAgentAudit({ agentId: req.agentId, serviceId: req.serviceId }, requesterSdkKey, category, req.mode || 'full');
   }
   if (req.type === 'project') {
     if (!req.name) throw new Error('Project due diligence requires: name');
     return await runProjectDueDiligence(req);
   }
-  throw new Error('Invalid type. Use "project" for due diligence or "agent" for agent audit.');
+  throw new Error('Invalid type. Use "project" or "agent".');
 }
