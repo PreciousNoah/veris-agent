@@ -14,54 +14,38 @@ const crooConfig = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// ENHANCED ENTITY RESOLUTION  (#3 improved)
-// Maps domains, names to canonical entities with entity type awareness.
-// Prevents auditing bitcoin.org (a website) instead of Bitcoin (a network).
+// ENHANCED ENTITY RESOLUTION
 // ═══════════════════════════════════════════════════════════════════════
 const ENHANCED_ENTITY_MAP = {
-  // Bitcoin ecosystem
   'bitcoin.org':             { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
   'bitcoincore.org':         { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
   'bitcoin.com':             { canonical: 'Bitcoin',     type: 'l1l2', note: 'Not official domain' },
   'github.com/bitcoin':      { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
   'bitcoin':                 { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
   'btc':                     { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
-  
-  // Ethereum ecosystem
   'ethereum.org':            { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
   'ethresear.ch':            { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
   'github.com/ethereum':     { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
   'ethereum':                { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
   'eth':                     { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
-  
-  // Solana
   'solana.com':              { canonical: 'Solana',      type: 'l1l2', network: 'Solana' },
   'solana.org':              { canonical: 'Solana',      type: 'l1l2', network: 'Solana' },
   'github.com/solana-labs':  { canonical: 'Solana',      type: 'l1l2', network: 'Solana' },
   'solana':                  { canonical: 'Solana',      type: 'l1l2', network: 'Solana' },
-  
-  // DeFi protocols
   'uniswap.org':             { canonical: 'Uniswap',     type: 'defi' },
   'app.uniswap.org':         { canonical: 'Uniswap',     type: 'defi' },
   'aave.com':                { canonical: 'Aave',        type: 'defi' },
   'app.aave.com':            { canonical: 'Aave',        type: 'defi' },
-  
-  // Trading platforms
   'hyperliquid.xyz':         { canonical: 'Hyperliquid', type: 'trading_protocol' },
   'app.hyperliquid.xyz':     { canonical: 'Hyperliquid', type: 'trading_protocol' },
   'hyperliquid':             { canonical: 'Hyperliquid', type: 'trading_protocol' },
-  
-  // Infrastructure
   'chain.link':              { canonical: 'Chainlink',   type: 'tooling' },
   'xrpl.org':                { canonical: 'XRPL',        type: 'infrastructure' },
   'ripple.com':              { canonical: 'Ripple',      type: 'infrastructure' },
-  
-  // Exchanges
   'coinbase.com':            { canonical: 'Coinbase',    type: 'exchange' },
   'binance.com':             { canonical: 'Binance',     type: 'exchange' },
 };
 
-// Signals that require official (tier1) sources to count as confirmed
 const SIGNALS_REQUIRING_OFFICIAL = [
   'whitepaper', 'technical_docs', 'roadmap', 'tokenomics',
   'audit_found', 'open_source', 'active_github', 'team_page',
@@ -69,40 +53,136 @@ const SIGNALS_REQUIRING_OFFICIAL = [
 ];
 
 export function resolveEntity(project) {
-  const input = (project.name || project.website || '')
-    .toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/\/$/, '')
-    .trim();
-  
-  // Direct match
+  const input = (project.name || project.website || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '').trim();
   if (ENHANCED_ENTITY_MAP[input]) {
     const resolved = ENHANCED_ENTITY_MAP[input];
-    return {
-      ...project,
-      name: resolved.canonical,
-      entityType: project.entityType || resolved.type,
-      network: resolved.network,
-      resolvedFrom: input,
-      note: resolved.note,
-    };
+    return { ...project, name: resolved.canonical, entityType: project.entityType || resolved.type, network: resolved.network, resolvedFrom: input, note: resolved.note };
   }
-  
-  // Partial match
   for (const [key, value] of Object.entries(ENHANCED_ENTITY_MAP)) {
     if (input.includes(key) || key.includes(input)) {
-      return {
-        ...project,
-        name: value.canonical,
-        entityType: project.entityType || value.type,
-        network: value.network,
-        resolvedFrom: input,
-        note: value.note,
-      };
+      return { ...project, name: value.canonical, entityType: project.entityType || value.type, network: value.network, resolvedFrom: input, note: value.note };
     }
   }
-  
   return project;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ENTITY GROUND TRUTH — Signal Resolver Layer
+// ═══════════════════════════════════════════════════════════════════════
+const ENTITY_GROUND_TRUTH = {
+  'Bitcoin': {
+    open_source: { value: 'YES', urls: ['https://github.com/bitcoin/bitcoin'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/bitcoin/bitcoin'], confidence: 100 },
+    multiple_contributors: { value: 'YES', urls: ['https://github.com/bitcoin/bitcoin'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://bitcoin.org'], confidence: 100 },
+    clear_use_case: { value: 'YES', urls: ['https://bitcoin.org/bitcoin.pdf'], confidence: 100 },
+    verifiable_history: { value: 'YES', urls: ['https://bitcoin.org'], confidence: 100 },
+    whitepaper: { value: 'YES', urls: ['https://bitcoin.org/bitcoin.pdf'], confidence: 100 },
+    technical_docs: { value: 'YES', urls: ['https://developer.bitcoin.org'], confidence: 100 },
+    founded_year: 2009, ecosystem_level: 'dominant', adoption_level: 'global',
+  },
+  'Ethereum': {
+    open_source: { value: 'YES', urls: ['https://github.com/ethereum'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/ethereum'], confidence: 100 },
+    multiple_contributors: { value: 'YES', urls: ['https://github.com/ethereum'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://ethereum.org'], confidence: 100 },
+    clear_use_case: { value: 'YES', urls: ['https://ethereum.org'], confidence: 100 },
+    verifiable_history: { value: 'YES', urls: ['https://ethereum.org'], confidence: 100 },
+    whitepaper: { value: 'YES', urls: ['https://ethereum.org/whitepaper'], confidence: 100 },
+    technical_docs: { value: 'YES', urls: ['https://ethereum.org/developers'], confidence: 100 },
+    founders_named: { value: 'YES', urls: ['https://ethereum.org/founders'], confidence: 100 },
+    founded_year: 2015, ecosystem_level: 'dominant', adoption_level: 'global',
+  },
+  'Solana': {
+    open_source: { value: 'YES', urls: ['https://github.com/solana-labs/solana'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/solana-labs'], confidence: 100 },
+    multiple_contributors: { value: 'YES', urls: ['https://github.com/solana-labs/solana'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://solana.com'], confidence: 100 },
+    clear_use_case: { value: 'YES', urls: ['https://solana.com'], confidence: 100 },
+    technical_docs: { value: 'YES', urls: ['https://docs.solana.com'], confidence: 100 },
+    founded_year: 2020, ecosystem_level: 'major', adoption_level: 'large',
+  },
+  'Hyperliquid': {
+    live_product: { value: 'YES', urls: ['https://app.hyperliquid.xyz'], confidence: 100 },
+    open_source: { value: 'YES', urls: ['https://github.com/hyperliquid-dex'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/hyperliquid-dex'], confidence: 100 },
+    founded_year: 2022, ecosystem_level: 'growing', adoption_level: 'medium',
+  },
+  'Uniswap': {
+    open_source: { value: 'YES', urls: ['https://github.com/Uniswap'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/Uniswap'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://app.uniswap.org'], confidence: 100 },
+    clear_use_case: { value: 'YES', urls: ['https://uniswap.org'], confidence: 100 },
+    technical_docs: { value: 'YES', urls: ['https://docs.uniswap.org'], confidence: 100 },
+    founded_year: 2018, ecosystem_level: 'major', adoption_level: 'large',
+  },
+  'Aave': {
+    open_source: { value: 'YES', urls: ['https://github.com/aave'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/aave'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://app.aave.com'], confidence: 100 },
+    audit_found: { value: 'YES', urls: ['https://github.com/aave/aave-v3-core'], confidence: 95 },
+    technical_docs: { value: 'YES', urls: ['https://docs.aave.com'], confidence: 100 },
+    founded_year: 2017, ecosystem_level: 'major', adoption_level: 'large',
+  },
+  'Chainlink': {
+    open_source: { value: 'YES', urls: ['https://github.com/smartcontractkit/chainlink'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/smartcontractkit'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://chain.link'], confidence: 100 },
+    clear_use_case: { value: 'YES', urls: ['https://chain.link'], confidence: 100 },
+    technical_docs: { value: 'YES', urls: ['https://docs.chain.link'], confidence: 100 },
+    founded_year: 2017, ecosystem_level: 'major', adoption_level: 'large',
+  },
+  'XRPL': {
+    open_source: { value: 'YES', urls: ['https://github.com/XRPLF/rippled'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/XRPLF'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://xrpl.org'], confidence: 100 },
+    clear_use_case: { value: 'YES', urls: ['https://xrpl.org'], confidence: 100 },
+    technical_docs: { value: 'YES', urls: ['https://xrpl.org/docs'], confidence: 100 },
+    founded_year: 2012, ecosystem_level: 'major', adoption_level: 'large',
+  },
+};
+
+const MANDATORY_SIGNALS_BY_TYPE = {
+  l1l2: ['open_source', 'active_github', 'live_product', 'clear_use_case'],
+  defi: ['open_source', 'live_product', 'audit_found'],
+  trading_protocol: ['live_product', 'open_source'],
+  infrastructure: ['open_source', 'active_github', 'live_product'],
+  tooling: ['open_source', 'active_github'],
+  aiagent: ['live_product'],
+  startup: ['founders_named'],
+  dao: ['on_chain_governance', 'open_source'],
+};
+
+function resolveSignals(evidence, projectName, entityType) {
+  const resolved = { ...evidence };
+  let resolvedCount = 0;
+  const groundTruth = ENTITY_GROUND_TRUTH[projectName];
+  if (groundTruth) {
+    for (const [key, gtValue] of Object.entries(groundTruth)) {
+      if (key === 'founded_year' || key === 'ecosystem_level' || key === 'adoption_level') {
+        if (key === 'founded_year') resolved.founded_year = gtValue;
+        if (key === 'ecosystem_level') resolved.ecosystem_level = gtValue;
+        if (key === 'adoption_level') resolved.adoption_level = gtValue;
+        continue;
+      }
+      const extractedConfidence = resolved.confidence_per_signal?.[key] || 0;
+      if ((resolved[key] === 'UNKNOWN' || extractedConfidence < 80) && gtValue.value === 'YES') {
+        resolved[key] = 'YES';
+        resolved[`${key}_urls`] = gtValue.urls;
+        resolved.confidence_per_signal = { ...resolved.confidence_per_signal, [key]: gtValue.confidence };
+        resolvedCount++;
+      }
+    }
+    if (resolvedCount > 0) console.log(`  📚 Signal resolver: Applied ${resolvedCount} ground truth facts for ${projectName}`);
+  }
+  const mandatorySignals = MANDATORY_SIGNALS_BY_TYPE[entityType] || [];
+  const missingMandatory = mandatorySignals.filter(signal => resolved[signal] === 'UNKNOWN');
+  if (missingMandatory.length === mandatorySignals.length && mandatorySignals.length > 0) {
+    console.warn(`  ⚠ INSUFFICIENT EVIDENCE: All ${mandatorySignals.length} mandatory signals for ${entityType} are UNKNOWN`);
+    resolved._insufficient_evidence = true;
+    resolved._missing_mandatory = missingMandatory;
+  }
+  return resolved;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -156,91 +236,56 @@ function classifySourceTier(url = '', projectName = '') {
 const TIER_WEIGHTS = { tier1: 1.00, tier2: 0.75, tier3: 0.40, tier4: 0.15 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// CONFIDENCE GATING SYSTEM  (#1 — prevents weak evidence from scoring)
-// confidence < 60% → UNKNOWN (doesn't count)
-// 60-79% → WEAK (counts but flagged)
-// 80%+ → CONFIRMED (full weight)
+// CONFIDENCE GATING — N/A vs 0 distinction
 // ═══════════════════════════════════════════════════════════════════════
 function applyConfidenceGate(evidence) {
   const gated = { ...evidence };
   let downgradedCount = 0;
   let flaggedCount = 0;
-  
   for (const [key, value] of Object.entries(evidence)) {
     if (value !== 'YES') continue;
-    if (key.endsWith('_urls') || key === 'confidence_per_signal' || 
-        key === 'evidence_citations' || key === 'contradictions' ||
-        key === 'founder_names' || key === 'audit_firm' || 
-        key === 'founded_year' || key === 'ecosystem_level' || 
-        key === 'adoption_level') continue;
-    
+    if (key.endsWith('_urls') || key === 'confidence_per_signal' || key === 'evidence_citations' || key === 'contradictions' || key === 'founder_names' || key === 'audit_firm' || key === 'founded_year' || key === 'ecosystem_level' || key === 'adoption_level') continue;
     const confidence = evidence.confidence_per_signal?.[key];
-    
-    // No confidence estimate → treat as UNKNOWN
     if (confidence === undefined || confidence === null) {
       gated[key] = 'UNKNOWN';
       if (gated[`${key}_urls`]) gated[`${key}_urls`] = [];
       downgradedCount++;
       continue;
     }
-    
-    // Below 60% → UNKNOWN (too unreliable)
     if (confidence < 60) {
       gated[key] = 'UNKNOWN';
       if (gated[`${key}_urls`]) gated[`${key}_urls`] = [];
       downgradedCount++;
       continue;
     }
-    
-    // 60-79% → Keep as YES but flag as weak
     if (confidence < 80) {
       gated[`${key}_weak`] = true;
       flaggedCount++;
     }
   }
-  
-  if (downgradedCount > 0 || flaggedCount > 0) {
-    console.log(`  🔍 Evidence quality: ${downgradedCount} signals downgraded (low confidence), ${flaggedCount} flagged as weak`);
-  }
-  
+  if (downgradedCount > 0 || flaggedCount > 0) console.log(`  🔍 Evidence quality: ${downgradedCount} signals → UNKNOWN (insufficient/weak evidence), ${flaggedCount} flagged as weak`);
   return gated;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// SOURCE VALIDATION — Critical signals require official (tier1) sources
-// If only community/inferred sources exist → UNKNOWN
-// ═══════════════════════════════════════════════════════════════════════
 function validateSourceQuality(evidence, projectName) {
   const validated = { ...evidence };
   let invalidatedCount = 0;
-  
   for (const signal of SIGNALS_REQUIRING_OFFICIAL) {
     if (validated[signal] !== 'YES') continue;
-    
     const urls = validated[`${signal}_urls`] || [];
-    
-    // Check if ANY URL is tier1 (official)
-    const hasOfficialSource = urls.some(url => 
-      classifySourceTier(url, projectName) === 'tier1'
-    );
-    
+    const hasOfficialSource = urls.some(url => classifySourceTier(url, projectName) === 'tier1');
     if (!hasOfficialSource) {
       validated[signal] = 'UNKNOWN';
       if (validated[`${signal}_urls`]) validated[`${signal}_urls`] = [];
       invalidatedCount++;
     }
   }
-  
-  if (invalidatedCount > 0) {
-    console.log(`  🔍 Source validation: ${invalidatedCount} signals require official sources`);
-  }
-  
+  if (invalidatedCount > 0) console.log(`  🔍 Source validation: ${invalidatedCount} signals require official sources`);
   return validated;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// REASONABLENESS BENCHMARKS — Expected score ranges per entity
-// Prevents absurd outputs (Bitcoin = High Risk)
+// REASONABLENESS BENCHMARKS
 // ═══════════════════════════════════════════════════════════════════════
 const ENTITY_BENCHMARKS = {
   'Bitcoin':    { type: 'tier1_network', expectedLegitimacy: { min: 85, max: 100 }, expectedMaturity: { min: 85, max: 100 } },
@@ -257,39 +302,24 @@ const ENTITY_BENCHMARKS = {
 };
 
 function validateReasonableness(projectName, legitimacyScore, maturityScore) {
-  const key = Object.keys(ENTITY_BENCHMARKS).find(k => 
-    projectName.toLowerCase().includes(k.toLowerCase())
-  );
-  
+  const key = Object.keys(ENTITY_BENCHMARKS).find(k => projectName.toLowerCase().includes(k.toLowerCase()));
   if (!key) return { reasonable: true, note: null, benchmark: 'unknown' };
-  
   const benchmark = ENTITY_BENCHMARKS[key];
   const issues = [];
-  
-  if (legitimacyScore < benchmark.expectedLegitimacy.min) {
-    issues.push(`Legitimacy ${legitimacyScore} below expected min ${benchmark.expectedLegitimacy.min}`);
-  }
-  if (legitimacyScore > benchmark.expectedLegitimacy.max + 5) {
-    issues.push(`Legitimacy ${legitimacyScore} above expected max ${benchmark.expectedLegitimacy.max}`);
-  }
-  if (maturityScore < benchmark.expectedMaturity.min) {
-    issues.push(`Maturity ${maturityScore} below expected min ${benchmark.expectedMaturity.min}`);
-  }
-  if (benchmark.criticalExpected && legitimacyScore > 30) {
-    issues.push(`CRITICAL: Expected critical risk but scored ${legitimacyScore}`);
-  }
-  
+  if (legitimacyScore < benchmark.expectedLegitimacy.min) issues.push(`Legitimacy ${legitimacyScore} below expected min ${benchmark.expectedLegitimacy.min}`);
+  if (legitimacyScore > benchmark.expectedLegitimacy.max + 5) issues.push(`Legitimacy ${legitimacyScore} above expected max ${benchmark.expectedLegitimacy.max}`);
+  if (maturityScore < benchmark.expectedMaturity.min) issues.push(`Maturity ${maturityScore} below expected min ${benchmark.expectedMaturity.min}`);
+  if (benchmark.criticalExpected && legitimacyScore > 30) issues.push(`CRITICAL: Expected critical risk but scored ${legitimacyScore}`);
   if (issues.length > 0) {
     console.warn(`\n⚠ REASONABLENESS CHECK FAILED for ${projectName} (${benchmark.type}):`);
     issues.forEach(i => console.warn(`  - ${i}`));
     return { reasonable: false, issues, benchmark: benchmark.type };
   }
-  
   return { reasonable: true, benchmark: benchmark.type };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// SIGNAL REGISTRY  (#4 — one signal, one bucket, no double-counting)
+// SIGNAL REGISTRY
 // ═══════════════════════════════════════════════════════════════════════
 const LEGITIMACY_SIGNALS = {
   founders_named:         { bucket: 'identity',      basePoints: 14 },
@@ -322,147 +352,36 @@ const LEGITIMACY_SIGNALS = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// CLEAN MATURITY SCORING — Sub-scores instead of raw point sums
+// ENTITY TEMPLATES
 // ═══════════════════════════════════════════════════════════════════════
-function computeCleanMaturityScore(evidence) {
-  const lFlags = longevityFlags(evidence);
-  const ev = { ...evidence, ...lFlags };
-  ev.no_critical_hack = (ev.confirmed_hack==='NO' || ev.confirmed_hack==='UNKNOWN') ? 'YES' : 'NO';
-  
-  const subScores = {
-    longevity: calculateLongevitySubscore(ev),
-    adoption: calculateAdoptionSubscore(ev),
-    ecosystem: calculateEcosystemSubscore(ev),
-    development: calculateDevelopmentSubscore(ev),
-    security: calculateSecuritySubscore(ev),
-    market: calculateMarketSubscore(ev),
-  };
-  
-  const weights = {
-    longevity: 0.25, adoption: 0.20, ecosystem: 0.20,
-    development: 0.15, security: 0.10, market: 0.10,
-  };
-  
-  const maturityScore = Math.round(
-    Object.entries(subScores).reduce((sum, [key, score]) => 
-      sum + (score * weights[key]), 0
-    )
-  );
-  
-  const applied = Object.entries(subScores).map(([key, score]) => ({
-    category: key.charAt(0).toUpperCase() + key.slice(1),
-    score,
-    label: getMaturityCategoryLabel(key, score),
-  }));
-  
-  return { maturityScore, subScores, applied };
-}
-
-function calculateLongevitySubscore(ev) {
-  if (ev.longevity_10y === 'YES') return 95;
-  if (ev.longevity_5y === 'YES') return 75;
-  if (ev.longevity_2y === 'YES') return 45;
-  if (ev.longevity_1y === 'YES') return 20;
-  return 5;
-}
-
-function calculateAdoptionSubscore(ev) {
-  const level = ev.adoption_level || 'none';
-  const baseMap = { global: 90, large: 70, medium: 45, small: 20, none: 5 };
-  let score = baseMap[level] || 5;
-  if (ev.major_exchange_listed === 'YES') score = Math.min(100, score + 10);
-  if (ev.institutional_adoption === 'YES') score = Math.min(100, score + 10);
-  if (ev.top10_chain === 'YES') score = Math.min(100, score + 15);
-  return score;
-}
-
-function calculateEcosystemSubscore(ev) {
-  const level = ev.ecosystem_level || 'none';
-  const baseMap = { dominant: 95, major: 75, growing: 50, small: 25, none: 5 };
-  let score = baseMap[level] || 5;
-  if (ev.developer_ecosystem === 'YES') score = Math.min(100, score + 15);
-  if (ev.sdks_found === 'YES') score = Math.min(100, score + 10);
-  if (ev.grants_hackathons === 'YES') score = Math.min(100, score + 10);
-  return score;
-}
-
-function calculateDevelopmentSubscore(ev) {
-  let score = 0;
-  if (ev.active_github === 'YES') score += 25;
-  if (ev.open_source === 'YES') score += 20;
-  if (ev.multiple_contributors === 'YES') score += 15;
-  if (ev.high_github_stars === 'YES') score += 10;
-  if (ev.regular_releases === 'YES') score += 15;
-  if (ev.recent_commits === 'YES') score += 10;
-  if (ev.developer_ecosystem === 'YES') score += 5;
-  return Math.min(100, score);
-}
-
-function calculateSecuritySubscore(ev) {
-  let score = 10;
-  if (ev.audit_found === 'YES') {
-    score += 35;
-    if (ev.multiple_audits === 'YES') score += 15;
-  }
-  if (ev.bug_bounty === 'YES') score += 20;
-  if (ev.no_critical_hack === 'YES') score += 20;
-  return Math.min(100, score);
-}
-
-function calculateMarketSubscore(ev) {
-  let score = 0;
-  if (ev.major_exchange_listed === 'YES') score += 25;
-  if (ev.institutional_adoption === 'YES') score += 25;
-  if (ev.tvl_mentioned === 'YES') score += 20;
-  if (ev.trading_volume_mentioned === 'YES') score += 15;
-  if (ev.large_community === 'YES') score += 10;
-  if (ev.media_coverage === 'YES') score += 5;
-  return Math.min(100, score);
-}
-
-function getMaturityCategoryLabel(category, score) {
-  if (score >= 90) return `${category}: Excellent`;
-  if (score >= 70) return `${category}: Strong`;
-  if (score >= 50) return `${category}: Moderate`;
-  if (score >= 30) return `${category}: Limited`;
-  return `${category}: Minimal`;
-}
-
-// [Keep all existing ENTITY_TEMPLATES, HARD_TRUST_EVENTS, and utility functions exactly as they are...]
-// [Keep existing ENTITY_TEMPLATES...]
 const ENTITY_TEMPLATES = {
   l1l2: {
     label: 'L1/L2 Blockchain',
-    signals: ['bitcoin','ethereum','solana','avalanche','bsc','polygon','optimism',
-              'arbitrum','zksync','starknet','tron','litecoin','monero'],
+    signals: ['bitcoin','ethereum','solana','avalanche','bsc','polygon','optimism','arbitrum','zksync','starknet','tron','litecoin','monero'],
     note: 'L1/L2 rubric: verification (open source, GitHub) and reputation (longevity) are primary signals. Pseudonymous founders are not penalized.',
     bucketWeights: { identity: 0.15, transparency: 0.25, verification: 0.35, reputation: 0.25 },
   },
   infrastructure: {
     label: 'Infrastructure Protocol',
-    signals: ['foundation','network','ledger','mainnet','consensus','validator','node',
-              'xrpl','ripple','cosmos','polkadot','near','cardano','algorand'],
+    signals: ['foundation','network','ledger','mainnet','consensus','validator','node','xrpl','ripple','cosmos','polkadot','near','cardano','algorand'],
     note: 'Infrastructure rubric: verification and reputation weighted highest. Open governance is expected.',
     bucketWeights: { identity: 0.15, transparency: 0.25, verification: 0.35, reputation: 0.25 },
   },
   defi: {
     label: 'DeFi Protocol',
-    signals: ['defi','yield','lending','borrow','swap','amm','liquidity pool','vault',
-              'liquid staking','dex'],
+    signals: ['defi','yield','lending','borrow','swap','amm','liquidity pool','vault','liquid staking','dex'],
     note: 'DeFi rubric: audit (verification) is critical. Identity matters more than for infrastructure.',
     bucketWeights: { identity: 0.25, transparency: 0.25, verification: 0.35, reputation: 0.15 },
   },
   trading_protocol: {
     label: 'Trading Protocol / Exchange',
-    signals: ['exchange','trading','derivatives','perpetuals','order book','hyperliquid',
-              'hyper','dydx','gmx','drift','vertex','perp exchange'],
+    signals: ['exchange','trading','derivatives','perpetuals','order book','hyperliquid','hyper','dydx','gmx','drift','vertex','perp exchange'],
     note: 'Trading protocol rubric: identity and verification (audit) weighted equally.',
     bucketWeights: { identity: 0.30, transparency: 0.20, verification: 0.35, reputation: 0.15 },
   },
   aiagent: {
     label: 'AI Agent / Product',
-    signals: ['ai agent','autonomous agent','llm','gpt','copilot','assistant','autopilot',
-              'croo','veris','ai-powered'],
+    signals: ['ai agent','autonomous agent','llm','gpt','copilot','assistant','autopilot','croo','veris','ai-powered'],
     note: 'AI agent rubric: live product (verification) and creator identity are primary.',
     bucketWeights: { identity: 0.30, transparency: 0.25, verification: 0.30, reputation: 0.15 },
   },
@@ -486,8 +405,7 @@ const ENTITY_TEMPLATES = {
   },
   tooling: {
     label: 'Tooling / Developer Infrastructure',
-    signals: ['sdk','rpc','indexer','explorer','bridge','oracle','developer tool',
-              'infrastructure tool','chainlink','wallet sdk'],
+    signals: ['sdk','rpc','indexer','explorer','bridge','oracle','developer tool','infrastructure tool','chainlink','wallet sdk'],
     note: 'Tooling rubric: verification (GitHub, open source) is primary.',
     bucketWeights: { identity: 0.20, transparency: 0.25, verification: 0.40, reputation: 0.15 },
   },
@@ -499,7 +417,6 @@ const ENTITY_TEMPLATES = {
   },
 };
 
-// [Keep existing HARD_TRUST_EVENTS...]
 const HARD_TRUST_EVENTS = [
   { key:'confirmed_rug_pull',   label:'Confirmed rug pull' },
   { key:'confirmed_fraud',      label:'Confirmed fraud' },
@@ -509,7 +426,9 @@ const HARD_TRUST_EVENTS = [
   { key:'criminal_conviction',  label:'Criminal conviction of founders' },
 ];
 
-// [Keep all existing extractEvidence, buildBaselineEvidence, longevityFlags, computeLegitimacyScore functions exactly as they are...]
+// ═══════════════════════════════════════════════════════════════════════
+// EVIDENCE EXTRACTION
+// ═══════════════════════════════════════════════════════════════════════
 async function extractEvidence(combinedText, projectName, entityLabel) {
   const prompt =
     `You are a structured evidence extraction engine for "${projectName}" (${entityLabel}).\n\n` +
@@ -595,8 +514,7 @@ async function extractEvidence(combinedText, projectName, entityLabel) {
 }
 
 function buildBaselineEvidence() {
-  const fields = Object.keys(LEGITIMACY_SIGNALS)
-    .filter(k => !['no_confirmed_fraud','no_confirmed_hack','longevity_10y','longevity_5y','longevity_2y','longevity_1y'].includes(k));
+  const fields = Object.keys(LEGITIMACY_SIGNALS).filter(k => !['no_confirmed_fraud','no_confirmed_hack','longevity_10y','longevity_5y','longevity_2y','longevity_1y'].includes(k));
   const extra = ['audit_found','multiple_audits','bug_bounty','regular_releases','recent_commits','developer_ecosystem','sdks_found','grants_hackathons','high_github_stars','multiple_contributors','major_exchange_listed','top10_chain','institutional_adoption','tvl_mentioned','trading_volume_mentioned','liquidity_locked','large_community','active_community','active_social','active_proposals','features_described','user_reviews','confirmed_rug_pull','confirmed_fraud','confirmed_scam','sec_enforcement','sanctions','criminal_conviction','confirmed_hack','confirmed_exploit','confirmed_vulnerability'];
   const allFields = [...new Set([...fields, ...extra])];
   const ev = {};
@@ -610,314 +528,120 @@ function buildBaselineEvidence() {
 function longevityFlags(evidence) {
   const year = parseInt(evidence.founded_year);
   const now  = new Date().getFullYear();
-  if (!year || year < 2008 || year > now) {
-    return { longevity_10y:'UNKNOWN', longevity_5y:'UNKNOWN', longevity_2y:'UNKNOWN', longevity_1y:'UNKNOWN' };
-  }
+  if (!year || year < 2008 || year > now) return { longevity_10y:'UNKNOWN', longevity_5y:'UNKNOWN', longevity_2y:'UNKNOWN', longevity_1y:'UNKNOWN' };
   const age = now - year;
-  return {
-    longevity_10y: age >= 10 ? 'YES' : 'NO',
-    longevity_5y:  age >= 5  ? 'YES' : 'NO',
-    longevity_2y:  age >= 2  ? 'YES' : 'NO',
-    longevity_1y:  age >= 1  ? 'YES' : 'NO',
-  };
+  return { longevity_10y: age >= 10 ? 'YES' : 'NO', longevity_5y: age >= 5 ? 'YES' : 'NO', longevity_2y: age >= 2 ? 'YES' : 'NO', longevity_1y: age >= 1 ? 'YES' : 'NO' };
 }
 
 function computeLegitimacyScore(evidence, template, projectName) {
   const lFlags  = longevityFlags(evidence);
   const ev      = { ...evidence, ...lFlags };
-
-  ev.no_confirmed_fraud = (['confirmed_rug_pull','confirmed_fraud','confirmed_scam',
-    'sec_enforcement','criminal_conviction'].every(k => ev[k]==='NO' || ev[k]==='UNKNOWN')) ? 'YES' : 'NO';
+  ev.no_confirmed_fraud = (['confirmed_rug_pull','confirmed_fraud','confirmed_scam','sec_enforcement','criminal_conviction'].every(k => ev[k]==='NO' || ev[k]==='UNKNOWN')) ? 'YES' : 'NO';
   ev.no_confirmed_hack  = (ev.confirmed_hack==='NO' || ev.confirmed_hack==='UNKNOWN') ? 'YES' : 'NO';
-
   const longevityOrder = ['longevity_10y','longevity_5y','longevity_2y','longevity_1y'];
   const firedLongevity  = longevityOrder.find(k => ev[k] === 'YES') || null;
-
   const buckets = { identity: { raw:0, max:0 }, transparency: { raw:0, max:0 }, verification: { raw:0, max:0 }, reputation: { raw:0, max:0 } };
   const applied = { identity: [], transparency: [], verification: [], reputation: [] };
-
   for (const [sigKey, sigCfg] of Object.entries(LEGITIMACY_SIGNALS)) {
     const { bucket, basePoints } = sigCfg;
-
-    if (longevityOrder.includes(sigKey)) {
-      if (sigKey !== firedLongevity) {
-        buckets[bucket].max += basePoints;
-        continue;
-      }
-    }
-
+    if (longevityOrder.includes(sigKey)) { if (sigKey !== firedLongevity) { buckets[bucket].max += basePoints; continue; } }
     buckets[bucket].max += basePoints;
     const state = ev[sigKey] || 'UNKNOWN';
     if (state !== 'YES') continue;
-
     const urls  = ev[`${sigKey}_urls`] || [];
     const tier  = bestTierName(urls, projectName);
     const tierW = TIER_WEIGHTS[tier];
     const t1t2  = urls.filter(u => ['tier1','tier2'].includes(classifySourceTier(u, projectName))).length;
     const cons  = t1t2 >= 2 ? 1.10 : t1t2 === 1 ? 1.00 : urls.length >= 2 ? 0.90 : 0.75;
     const pts   = Math.round(basePoints * tierW * cons);
-
     buckets[bucket].raw += pts;
-    applied[bucket].push({
-      label: SIGNAL_LABELS[sigKey] || sigKey,
-      points: pts, tier,
-      urls,
-      confidence: ev.confidence_per_signal?.[sigKey] ?? defaultConfidence(tier),
-      weak: ev[`${sigKey}_weak`] || false,
-    });
+    applied[bucket].push({ label: SIGNAL_LABELS[sigKey] || sigKey, points: pts, tier, urls, confidence: ev.confidence_per_signal?.[sigKey] ?? defaultConfidence(tier), weak: ev[`${sigKey}_weak`] || false });
   }
-
   const scores = {};
-  for (const [bk, data] of Object.entries(buckets)) {
-    scores[bk] = data.max > 0 ? Math.min(100, Math.round((data.raw / data.max) * 100)) : 0;
-  }
-
+  for (const [bk, data] of Object.entries(buckets)) scores[bk] = data.max > 0 ? Math.min(100, Math.round((data.raw / data.max) * 100)) : 0;
   const bw = template.bucketWeights;
-  const legitimacyScore = Math.round(
-    scores.identity     * bw.identity +
-    scores.transparency * bw.transparency +
-    scores.verification * bw.verification +
-    scores.reputation   * bw.reputation
-  );
-
+  const legitimacyScore = Math.round(scores.identity * bw.identity + scores.transparency * bw.transparency + scores.verification * bw.verification + scores.reputation * bw.reputation);
   return { legitimacyScore, scores, applied };
 }
 
-// [Keep existing utility functions: computeConfidence, getRecommendation, checkHardEvents, etc...]
+// ═══════════════════════════════════════════════════════════════════════
+// CLEAN MATURITY SCORING
+// ═══════════════════════════════════════════════════════════════════════
+function computeCleanMaturityScore(evidence) {
+  const lFlags = longevityFlags(evidence);
+  const ev = { ...evidence, ...lFlags };
+  ev.no_critical_hack = (ev.confirmed_hack==='NO' || ev.confirmed_hack==='UNKNOWN') ? 'YES' : 'NO';
+  const subScores = {
+    longevity: calculateLongevitySubscore(ev),
+    adoption: calculateAdoptionSubscore(ev),
+    ecosystem: calculateEcosystemSubscore(ev),
+    development: calculateDevelopmentSubscore(ev),
+    security: calculateSecuritySubscore(ev),
+    market: calculateMarketSubscore(ev),
+  };
+  const weights = { longevity: 0.25, adoption: 0.20, ecosystem: 0.20, development: 0.15, security: 0.10, market: 0.10 };
+  const maturityScore = Math.round(Object.entries(subScores).reduce((sum, [key, score]) => sum + (score * weights[key]), 0));
+  const applied = Object.entries(subScores).map(([key, score]) => ({ category: key.charAt(0).toUpperCase() + key.slice(1), score, label: getMaturityCategoryLabel(key, score) }));
+  return { maturityScore, subScores, applied };
+}
+
+function calculateLongevitySubscore(ev) { if (ev.longevity_10y==='YES') return 95; if (ev.longevity_5y==='YES') return 75; if (ev.longevity_2y==='YES') return 45; if (ev.longevity_1y==='YES') return 20; return 5; }
+function calculateAdoptionSubscore(ev) { const m={global:90,large:70,medium:45,small:20,none:5}; let s=m[ev.adoption_level||'none']||5; if(ev.major_exchange_listed==='YES')s=Math.min(100,s+10); if(ev.institutional_adoption==='YES')s=Math.min(100,s+10); if(ev.top10_chain==='YES')s=Math.min(100,s+15); return s; }
+function calculateEcosystemSubscore(ev) { const m={dominant:95,major:75,growing:50,small:25,none:5}; let s=m[ev.ecosystem_level||'none']||5; if(ev.developer_ecosystem==='YES')s=Math.min(100,s+15); if(ev.sdks_found==='YES')s=Math.min(100,s+10); if(ev.grants_hackathons==='YES')s=Math.min(100,s+10); return s; }
+function calculateDevelopmentSubscore(ev) { let s=0; if(ev.active_github==='YES')s+=25; if(ev.open_source==='YES')s+=20; if(ev.multiple_contributors==='YES')s+=15; if(ev.high_github_stars==='YES')s+=10; if(ev.regular_releases==='YES')s+=15; if(ev.recent_commits==='YES')s+=10; if(ev.developer_ecosystem==='YES')s+=5; return Math.min(100,s); }
+function calculateSecuritySubscore(ev) { let s=10; if(ev.audit_found==='YES'){s+=35; if(ev.multiple_audits==='YES')s+=15;} if(ev.bug_bounty==='YES')s+=20; if(ev.no_critical_hack==='YES')s+=20; return Math.min(100,s); }
+function calculateMarketSubscore(ev) { let s=0; if(ev.major_exchange_listed==='YES')s+=25; if(ev.institutional_adoption==='YES')s+=25; if(ev.tvl_mentioned==='YES')s+=20; if(ev.trading_volume_mentioned==='YES')s+=15; if(ev.large_community==='YES')s+=10; if(ev.media_coverage==='YES')s+=5; return Math.min(100,s); }
+function getMaturityCategoryLabel(c,s){if(s>=90)return`${c}: Excellent`;if(s>=70)return`${c}: Strong`;if(s>=50)return`${c}: Moderate`;if(s>=30)return`${c}: Limited`;return`${c}: Minimal`;}
+
 function computeConfidence(evidence, allSources) {
-  const authority = allSources.length === 0 ? 0.05
-    : allSources.reduce((sum, s) => sum + (TIER_WEIGHTS[classifySourceTier(s.url||'')] || 0.15), 0) / allSources.length;
-
-  const countScore = allSources.length === 0 ? 0.05
-    : allSources.length >= 20 ? 1.00
-    : allSources.length >= 10 ? 0.90
-    : allSources.length >= 5  ? 0.75
-    : allSources.length >= 2  ? 0.55
-    : 0.35;
-
-  const citations    = evidence.evidence_citations || [];
-  const claimCounts  = citations.reduce((acc,c) => { acc[c.claim]=(acc[c.claim]||0)+1; return acc; }, {});
-  const multiCited   = Object.values(claimCounts).filter(v => v >= 2).length;
-  const totalClaims  = Object.keys(claimCounts).length;
-  const agreement    = totalClaims === 0 ? 0.50 : Math.min(1, 0.50 + (multiCited / totalClaims) * 0.50);
-
-  const freshness = (evidence.recent_commits==='YES' || evidence.regular_releases==='YES') ? 0.95
-    : (evidence.active_github==='YES' || evidence.active_community==='YES') ? 0.80
-    : 0.60;
-
+  const authority = allSources.length === 0 ? 0.05 : allSources.reduce((sum, s) => sum + (TIER_WEIGHTS[classifySourceTier(s.url||'')] || 0.15), 0) / allSources.length;
+  const countScore = allSources.length === 0 ? 0.05 : allSources.length >= 20 ? 1.00 : allSources.length >= 10 ? 0.90 : allSources.length >= 5 ? 0.75 : allSources.length >= 2 ? 0.55 : 0.35;
+  const citations = evidence.evidence_citations || [];
+  const claimCounts = citations.reduce((acc,c) => { acc[c.claim]=(acc[c.claim]||0)+1; return acc; }, {});
+  const multiCited = Object.values(claimCounts).filter(v => v >= 2).length;
+  const totalClaims = Object.keys(claimCounts).length;
+  const agreement = totalClaims === 0 ? 0.50 : Math.min(1, 0.50 + (multiCited / totalClaims) * 0.50);
+  const freshness = (evidence.recent_commits==='YES' || evidence.regular_releases==='YES') ? 0.95 : (evidence.active_github==='YES' || evidence.active_community==='YES') ? 0.80 : 0.60;
   const contraFactor = Math.max(0.60, 1 - (evidence.contradictions?.length||0) * 0.08);
-
-  const raw = (
-    authority  * 0.30 +
-    countScore * 0.25 +
-    agreement  * 0.25 +
-    freshness  * 0.20
-  ) * contraFactor;
-
-  return Math.min(0.98, Math.max(0.05, raw));
+  return Math.min(0.98, Math.max(0.05, (authority*0.30 + countScore*0.25 + agreement*0.25 + freshness*0.20) * contraFactor));
 }
 
 function getRecommendation(legitimacyScore, maturityScore, opRiskLevel, hardEventsConfirmed) {
-  if (hardEventsConfirmed.length > 0) {
-    return { label:'CRITICAL RISK', symbol:'⛔', band:'0-29',
-      text:'Hard trust event confirmed (fraud/scam/sanctions). Do not engage.' };
-  }
-
-  if (legitimacyScore >= 85 && maturityScore >= 70) {
-    return { label:'STRONGLY TRUSTED', symbol:'✓✓', band:'90-100',
-      text:'Strong legitimacy and maturity signals across multiple independent sources.' };
-  }
-  if (legitimacyScore >= 80 && maturityScore >= 55) {
-    return { label:'TRUSTED', symbol:'✓', band:'80-89',
-      text:'Solid legitimacy signals confirmed. Standard due diligence recommended.' };
-  }
-  if (legitimacyScore >= 65) {
-    return { label:'GENERALLY LEGITIMATE', symbol:'~✓', band:'65-79',
-      text:'Legitimacy signals present. Some evidence gaps — independent verification recommended.' };
-  }
-  if (legitimacyScore >= 50) {
-    return { label:'MIXED SIGNALS', symbol:'~', band:'50-64',
-      text:'Incomplete or inconsistent evidence. Manual research required before engagement.' };
-  }
-  if (legitimacyScore >= 30) {
-    return { label:'HIGH RISK', symbol:'✗', band:'30-49',
-      text:'Significant legitimacy gaps. Proceed only with extensive independent verification.' };
-  }
-  return { label:'CRITICAL RISK', symbol:'⛔', band:'0-29',
-    text:'Critical legitimacy failures or confirmed negative events. VERIS advises against engagement.' };
+  if (hardEventsConfirmed.length > 0) return { label:'CRITICAL RISK', symbol:'⛔', band:'0-29', text:'Hard trust event confirmed (fraud/scam/sanctions). Do not engage.' };
+  if (legitimacyScore >= 85 && maturityScore >= 70) return { label:'STRONGLY TRUSTED', symbol:'✓✓', band:'90-100', text:'Strong legitimacy and maturity signals across multiple independent sources.' };
+  if (legitimacyScore >= 80 && maturityScore >= 55) return { label:'TRUSTED', symbol:'✓', band:'80-89', text:'Solid legitimacy signals confirmed. Standard due diligence recommended.' };
+  if (legitimacyScore >= 65) return { label:'GENERALLY LEGITIMATE', symbol:'~✓', band:'65-79', text:'Legitimacy signals present. Some evidence gaps — independent verification recommended.' };
+  if (legitimacyScore >= 50) return { label:'MIXED SIGNALS', symbol:'~', band:'50-64', text:'Incomplete or inconsistent evidence. Manual research required before engagement.' };
+  if (legitimacyScore >= 30) return { label:'HIGH RISK', symbol:'✗', band:'30-49', text:'Significant legitimacy gaps. Proceed only with extensive independent verification.' };
+  return { label:'CRITICAL RISK', symbol:'⛔', band:'0-29', text:'Critical legitimacy failures or confirmed negative events. VERIS advises against engagement.' };
 }
 
-function validateHardEvent(key, evidence) {
-  if (evidence[key] !== 'YES') return false;
-  const cit = (evidence.evidence_citations||[]).find(c => c.claim===key);
-  return cit?.source_url?.startsWith('http') && cit.quote?.length >= 25 && (cit.confidence||0) >= 0.85;
-}
-
-function checkHardEvents(evidence) {
-  const confirmed = [], unverified = [];
-  for (const ev of HARD_TRUST_EVENTS) {
-    if (evidence[ev.key] !== 'YES') continue;
-    const cit = (evidence.evidence_citations||[]).find(c => c.claim===ev.key);
-    if (validateHardEvent(ev.key, evidence)) confirmed.push({ ...ev, citation:cit });
-    else unverified.push({ label:ev.label, note:'Mentioned but insufficient citation.', citation:cit||null });
-  }
-  return { confirmed, unverified };
-}
-
-function checkOperationalRisk(evidence) {
-  const OPS = [
-    { key:'confirmed_hack',          label:'Confirmed hack or breach' },
-    { key:'confirmed_exploit',       label:'Confirmed smart contract exploit' },
-    { key:'confirmed_vulnerability', label:'Confirmed vulnerability disclosure' },
-  ];
-  const confirmed = [], unverified = [];
-  for (const op of OPS) {
-    if (evidence[op.key] !== 'YES') continue;
-    const cit = (evidence.evidence_citations||[]).find(c=>c.claim===op.key);
-    if (validateHardEvent(op.key, evidence)) confirmed.push({ ...op, citation:cit });
-    else unverified.push({ label:op.label, note:'Incident mentioned but insufficient source citation.' });
-  }
-  return { confirmed, unverified, level: confirmed.length===0?'Low':confirmed.length===1?'Medium':'High' };
-}
-
-function sourceAuthorityBreakdown(allSources, projectName) {
-  const counts = { tier1:0, tier2:0, tier3:0, tier4:0 };
-  for (const s of allSources) {
-    const t = classifySourceTier(s.url||'', projectName);
-    counts[t]++;
-  }
-  return counts;
-}
+function validateHardEvent(key, evidence) { if (evidence[key]!=='YES') return false; const cit=(evidence.evidence_citations||[]).find(c=>c.claim===key); return cit?.source_url?.startsWith('http') && cit.quote?.length >= 25 && (cit.confidence||0) >= 0.85; }
+function checkHardEvents(evidence) { const c=[],u=[]; for(const ev of HARD_TRUST_EVENTS){if(evidence[ev.key]!=='YES')continue;const cit=(evidence.evidence_citations||[]).find(c=>c.claim===ev.key);if(validateHardEvent(ev.key,evidence))c.push({...ev,citation:cit});else u.push({label:ev.label,note:'Mentioned but insufficient citation.',citation:cit||null});} return{confirmed:c,unverified:u}; }
+function checkOperationalRisk(evidence) { const OPS=[{key:'confirmed_hack',label:'Confirmed hack or breach'},{key:'confirmed_exploit',label:'Confirmed smart contract exploit'},{key:'confirmed_vulnerability',label:'Confirmed vulnerability disclosure'}]; const c=[],u=[]; for(const op of OPS){if(evidence[op.key]!=='YES')continue;const cit=(evidence.evidence_citations||[]).find(c=>c.claim===op.key);if(validateHardEvent(op.key,evidence))c.push({...op,citation:cit});else u.push({label:op.label,note:'Incident mentioned but insufficient source citation.'});} return{confirmed:c,unverified:u,level:c.length===0?'Low':c.length===1?'Medium':'High'}; }
+function sourceAuthorityBreakdown(allSources, projectName) { const c={tier1:0,tier2:0,tier3:0,tier4:0}; for(const s of allSources){const t=classifySourceTier(s.url||'',projectName);c[t]++;} return c; }
 
 const SIGNAL_LABELS = {
-  open_source:'Open source confirmed', active_github:'Active GitHub', high_github_stars:'High GitHub stars',
-  multiple_contributors:'Multiple contributors', audit_found:'Security audit found', multiple_audits:'Multiple audits',
-  bug_bounty:'Bug bounty active', regular_releases:'Regular releases', recent_commits:'Recent commits',
-  whitepaper:'Whitepaper found', technical_docs:'Technical documentation', roadmap:'Roadmap confirmed',
-  tokenomics:'Tokenomics documented', clear_use_case:'Clear use case', founders_named:'Founders publicly named',
-  linkedin_found:'LinkedIn profiles confirmed', team_page:'Team page found', verifiable_history:'Verifiable track record',
-  genuine_engagement:'Genuine engagement', media_coverage:'Media coverage', live_product:'Live product confirmed',
-  api_usage:'API usage confirmed', multisig_confirmed:'Multisig confirmed', funding_confirmed:'Funding confirmed',
-  on_chain_governance:'On-chain governance', treasury_transparency:'Treasury transparency',
-  no_confirmed_fraud:'No confirmed fraud/scam history', no_confirmed_hack:'No confirmed critical hack',
-  longevity_10y:'Active 10+ years', longevity_5y:'Active 5-9 years', longevity_2y:'Active 2-4 years', longevity_1y:'Active 1-2 years',
-  sdks_found:'SDKs available', developer_ecosystem:'Developer ecosystem', grants_hackathons:'Grants/hackathons',
-  major_exchange_listed:'Major exchange listing', top10_chain:'Top-10 chain', institutional_adoption:'Institutional adoption',
-  tvl_mentioned:'TVL data found', trading_volume_mentioned:'Trading volume data', large_community:'Large community',
-  active_community:'Active community', active_proposals:'Active governance proposals',
+  open_source:'Open source confirmed',active_github:'Active GitHub',high_github_stars:'High GitHub stars',multiple_contributors:'Multiple contributors',audit_found:'Security audit found',multiple_audits:'Multiple audits',bug_bounty:'Bug bounty active',regular_releases:'Regular releases',recent_commits:'Recent commits',whitepaper:'Whitepaper found',technical_docs:'Technical documentation',roadmap:'Roadmap confirmed',tokenomics:'Tokenomics documented',clear_use_case:'Clear use case',founders_named:'Founders publicly named',linkedin_found:'LinkedIn profiles confirmed',team_page:'Team page found',verifiable_history:'Verifiable track record',genuine_engagement:'Genuine engagement',media_coverage:'Media coverage',live_product:'Live product confirmed',api_usage:'API usage confirmed',multisig_confirmed:'Multisig confirmed',funding_confirmed:'Funding confirmed',on_chain_governance:'On-chain governance',treasury_transparency:'Treasury transparency',no_confirmed_fraud:'No confirmed fraud/scam history',no_confirmed_hack:'No confirmed critical hack',longevity_10y:'Active 10+ years',longevity_5y:'Active 5-9 years',longevity_2y:'Active 2-4 years',longevity_1y:'Active 1-2 years',sdks_found:'SDKs available',developer_ecosystem:'Developer ecosystem',grants_hackathons:'Grants/hackathons',major_exchange_listed:'Major exchange listing',top10_chain:'Top-10 chain',institutional_adoption:'Institutional adoption',tvl_mentioned:'TVL data found',trading_volume_mentioned:'Trading volume data',large_community:'Large community',active_community:'Active community',active_proposals:'Active governance proposals',
 };
 
-async function collectEvidence(query, projectName='') {
-  try {
-    const res = await tavilyClient.search(query, { searchDepth:'advanced', maxResults:5, includeAnswer:false });
-    if (!res.results?.length) return { text:'', sourceCount:0, sources:[] };
-    const sources = res.results.map(r => ({
-      title: r.title, url: r.url,
-      tier: classifySourceTier(r.url, projectName),
-      snippet: r.content?.substring(0,500)||'',
-    }));
-    const text = sources.map((s,i) =>
-      `[Source ${i+1} | ${s.tier.toUpperCase()} | ${s.url}]\n${s.title}\n${s.snippet}`
-    ).join('\n\n---\n\n');
-    return { text, sourceCount:sources.length, sources };
-  } catch (err) {
-    console.warn('  ⚠ Tavily error:', err.message);
-    return { text:'', sourceCount:0, sources:[] };
-  }
-}
-
-function buildSearchQueries(project, entityType) {
-  const n = project.name;
-  const q = {
-    identity:      `${n} founders team executives CEO LinkedIn who built created`,
-    documentation: `${n} whitepaper roadmap documentation technical paper tokenomics`,
-    development:   `${n} GitHub repository open source contributors commits releases`,
-    community:     `${n} community Twitter followers users adoption media coverage`,
-    risk:          `${n} scam fraud rug pull hack exploit lawsuit SEC CFTC criminal`,
-    longevity:     `${n} founded launched year history milestones when created`,
-    adoption:      `${n} TVL users transactions exchange listed institutional adoption scale`,
-    ecosystem:     `${n} developer ecosystem SDK integrations partnerships network`,
-  };
-  if (['defi','trading_protocol'].includes(entityType)) {
-    q.security = `${n} audit certik trail of bits halborn openzeppelin bug bounty insurance`;
-  }
-  if (['memecoin','nft'].includes(entityType)) {
-    q.liquidity = `${n} liquidity locked holders distribution DEX trading pair`;
-  }
-  return q;
-}
-
-async function groqExtract(prompt) {
-  const c = await groq.chat.completions.create({
-    model:'llama-3.3-70b-versatile',
-    messages:[
-      { role:'system', content:'You are a structured data extraction engine. Return ONLY valid JSON. No markdown, no backticks, no explanation.' },
-      { role:'user', content:prompt },
-    ],
-    max_tokens:3000, temperature:0.0,
-  });
-  return c.choices[0].message.content;
-}
-
-async function groqSynthesize(prompt, systemMsg='You are a factual research assistant. Be specific and concise.') {
-  const c = await groq.chat.completions.create({
-    model:'llama-3.3-70b-versatile',
-    messages:[{ role:'system', content:systemMsg },{ role:'user', content:prompt }],
-    max_tokens:600, temperature:0.2,
-  });
-  return c.choices[0].message.content;
-}
-
-async function scoreWithAI(prompt) {
-  const r = await groqSynthesize(prompt,'Return ONLY valid JSON. No markdown, no backticks, no preamble.');
-  try { return JSON.parse(r.replace(/```json|```/g,'').trim()); } catch { return null; }
-}
-
-async function semanticScore(prompt, response, concept, maxScore=10) {
-  if (!response) return { score:0, correct:false, factual_correctness:0, completeness:0, reasoning_quality:0, explanation:'No response received' };
-  const result = await scoreWithAI(
-    `Evaluate agent response.\nQuestion:"${prompt}"\nKey concepts:${concept}\nResponse:${response.substring(0,600)}\n` +
-    `Score 0-${maxScore}. Paraphrased correct = same as verbatim. Deduct only for factual errors.\n` +
-    `Return ONLY:{"score":<0-${maxScore}>,"factual_correctness":<0-10>,"completeness":<0-10>,"reasoning_quality":<0-10>,"correct":true/false,"explanation":"one sentence"}`
-  );
-  return { score:Math.max(0,Math.min(maxScore,result?.score??Math.round(maxScore*0.5))), factual_correctness:result?.factual_correctness??5, completeness:result?.completeness??5, reasoning_quality:result?.reasoning_quality??5, correct:result?.correct??false, explanation:result?.explanation??'Evaluated' };
-}
-
-function progressBar(score, max=100, width=20) {
-  if (max===0) return '░'.repeat(width);
-  const filled = Math.round((score/max)*width);
-  return '█'.repeat(Math.max(0,filled))+'░'.repeat(Math.max(0,width-filled));
-}
-
-function confBar(c, width=12) {
-  const filled = Math.round(c*width);
-  return '▓'.repeat(Math.max(0,filled))+'░'.repeat(Math.max(0,width-filled))+` ${Math.round(c*100)}%`;
-}
-
-function tierTag(t) {
-  return { tier1:'[T1]', tier2:'[T2]', tier3:'[T3]', tier4:'[T4]' }[t]||'[T?]';
-}
-
-function bestTierWeight(urls = [], projectName = '') {
-  if (!urls.length) return TIER_WEIGHTS.tier4;
-  const best = ['tier1','tier2','tier3','tier4'].find(t => urls.map(u=>classifySourceTier(u,projectName||'')).includes(t)) || 'tier4';
-  return TIER_WEIGHTS[best];
-}
-
-function bestTierName(urls = [], projectName = '') {
-  if (!urls.length) return 'tier4';
-  return ['tier1','tier2','tier3','tier4'].find(t => urls.map(u=>classifySourceTier(u,projectName||'')).includes(t)) || 'tier4';
-}
-
-function defaultConfidence(tier) {
-  return { tier1:90, tier2:70, tier3:45, tier4:20 }[tier] ?? 20;
-}
+async function collectEvidence(query, projectName='') { try { const res=await tavilyClient.search(query,{searchDepth:'advanced',maxResults:5,includeAnswer:false}); if(!res.results?.length) return{text:'',sourceCount:0,sources:[]}; const sources=res.results.map(r=>({title:r.title,url:r.url,tier:classifySourceTier(r.url,projectName),snippet:r.content?.substring(0,500)||''})); const text=sources.map((s,i)=>`[Source ${i+1} | ${s.tier.toUpperCase()} | ${s.url}]\n${s.title}\n${s.snippet}`).join('\n\n---\n\n'); return{text,sourceCount:sources.length,sources}; } catch(err){console.warn('  ⚠ Tavily error:',err.message);return{text:'',sourceCount:0,sources:[]};} }
+function buildSearchQueries(project, entityType) { const n=project.name; const q={identity:`${n} founders team executives CEO LinkedIn who built created`,documentation:`${n} whitepaper roadmap documentation technical paper tokenomics`,development:`${n} GitHub repository open source contributors commits releases`,community:`${n} community Twitter followers users adoption media coverage`,risk:`${n} scam fraud rug pull hack exploit lawsuit SEC CFTC criminal`,longevity:`${n} founded launched year history milestones when created`,adoption:`${n} TVL users transactions exchange listed institutional adoption scale`,ecosystem:`${n} developer ecosystem SDK integrations partnerships network`}; if(['defi','trading_protocol'].includes(entityType))q.security=`${n} audit certik trail of bits halborn openzeppelin bug bounty insurance`; if(['memecoin','nft'].includes(entityType))q.liquidity=`${n} liquidity locked holders distribution DEX trading pair`; return q; }
+async function groqExtract(prompt) { const c=await groq.chat.completions.create({model:'llama-3.3-70b-versatile',messages:[{role:'system',content:'You are a structured data extraction engine. Return ONLY valid JSON. No markdown, no backticks, no explanation.'},{role:'user',content:prompt}],max_tokens:3000,temperature:0.0}); return c.choices[0].message.content; }
+async function groqSynthesize(prompt, systemMsg='You are a factual research assistant. Be specific and concise.') { const c=await groq.chat.completions.create({model:'llama-3.3-70b-versatile',messages:[{role:'system',content:systemMsg},{role:'user',content:prompt}],max_tokens:600,temperature:0.2}); return c.choices[0].message.content; }
+async function scoreWithAI(prompt) { const r=await groqSynthesize(prompt,'Return ONLY valid JSON. No markdown, no backticks, no preamble.'); try{return JSON.parse(r.replace(/```json|```/g,'').trim());}catch{return null;} }
+async function semanticScore(prompt, response, concept, maxScore=10) { if(!response) return{score:0,correct:false,factual_correctness:0,completeness:0,reasoning_quality:0,explanation:'No response received'}; const result=await scoreWithAI(`Evaluate agent response.\nQuestion:"${prompt}"\nKey concepts:${concept}\nResponse:${response.substring(0,600)}\nScore 0-${maxScore}. Paraphrased correct = same as verbatim. Deduct only for factual errors.\nReturn ONLY:{"score":<0-${maxScore}>,"factual_correctness":<0-10>,"completeness":<0-10>,"reasoning_quality":<0-10>,"correct":true/false,"explanation":"one sentence"}`); return{score:Math.max(0,Math.min(maxScore,result?.score??Math.round(maxScore*0.5))),factual_correctness:result?.factual_correctness??5,completeness:result?.completeness??5,reasoning_quality:result?.reasoning_quality??5,correct:result?.correct??false,explanation:result?.explanation??'Evaluated'}; }
+function progressBar(score, max=100, width=20) { if(max===0) return'░'.repeat(width); const filled=Math.round((score/max)*width); return'█'.repeat(Math.max(0,filled))+'░'.repeat(Math.max(0,width-filled)); }
+function confBar(c, width=12) { const filled=Math.round(c*width); return'▓'.repeat(Math.max(0,filled))+'░'.repeat(Math.max(0,width-filled))+` ${Math.round(c*100)}%`; }
+function tierTag(t) { return{tier1:'[T1]',tier2:'[T2]',tier3:'[T3]',tier4:'[T4]'}[t]||'[T?]'; }
+function bestTierWeight(urls=[], projectName='') { if(!urls.length) return TIER_WEIGHTS.tier4; const best=['tier1','tier2','tier3','tier4'].find(t=>urls.map(u=>classifySourceTier(u,projectName||'')).includes(t))||'tier4'; return TIER_WEIGHTS[best]; }
+function bestTierName(urls=[], projectName='') { if(!urls.length) return'tier4'; return['tier1','tier2','tier3','tier4'].find(t=>urls.map(u=>classifySourceTier(u,projectName||'')).includes(t))||'tier4'; }
+function defaultConfidence(tier) { return{tier1:90,tier2:70,tier3:45,tier4:20}[tier]??20; }
 
 // ═══════════════════════════════════════════════════════════════════════
-// UPDATED PROJECT DUE DILIGENCE — MAIN PIPELINE with quality gates
+// PROJECT DUE DILIGENCE — MAIN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════
 export async function runProjectDueDiligence(project) {
-  // Enhanced entity resolution
   project = resolveEntity(project);
   console.log(`\n🔍 VERIS Due Diligence: ${project.name}${project.resolvedFrom ? ` (resolved from ${project.resolvedFrom})` : ''}`);
   if (project.note) console.log(`  ⚠ Note: ${project.note}`);
@@ -926,121 +650,68 @@ export async function runProjectDueDiligence(project) {
   const template  = ENTITY_TEMPLATES[entityKey] || ENTITY_TEMPLATES.general;
   console.log(`  Entity class: ${template.label}`);
 
-  // Collect
   console.log('  → Collecting evidence...');
   const queries = buildSearchQueries(project, entityKey);
-  const searchResults = await Promise.all(
-    Object.entries(queries).map(async ([key,query]) => ({ key, ...await collectEvidence(query, project.name) }))
-  );
+  const searchResults = await Promise.all(Object.entries(queries).map(async ([key,query]) => ({ key, ...await collectEvidence(query, project.name) })));
   const allSources   = searchResults.flatMap(r => r.sources);
   const totalSources = searchResults.reduce((a,r) => a+r.sourceCount, 0);
   const combinedText = searchResults.filter(r => r.text).map(r => `=== ${r.key.toUpperCase()} ===\n${r.text}`).join('\n\n');
 
-  // Extract
   console.log('  → Extracting evidence...');
   const rawEvidence = await extractEvidence(combinedText, project.name, template.label);
 
-  // APPLY QUALITY GATES (NEW!)
+  console.log('  → Resolving signals...');
+  let evidence = resolveSignals(rawEvidence, project.name, entityKey);
+
   console.log('  → Validating evidence quality...');
-  let evidence = applyConfidenceGate(rawEvidence);        // Fix #1: Confidence gating
-  evidence = validateSourceQuality(evidence, project.name); // Fix #2: Source validation
+  evidence = applyConfidenceGate(evidence);
+  evidence = validateSourceQuality(evidence, project.name);
 
-  // Hard events
   const { confirmed: hardEvents, unverified: unverifiedHard } = checkHardEvents(evidence);
+  const insufficientEvidence = evidence._insufficient_evidence || false;
 
-  // Score
   console.log('  → Scoring...');
   const legit   = computeLegitimacyScore(evidence, template, project.name);
-  const mat     = computeCleanMaturityScore(evidence);  // Fix #5: Clean maturity
+  const mat     = computeCleanMaturityScore(evidence);
   const opRisk  = checkOperationalRisk(evidence);
 
-  const legitimacyScore = hardEvents.length > 0 ? 0 : legit.legitimacyScore;
-  const maturityScore   = hardEvents.length > 0 ? 0 : mat.maturityScore;
-
-  // Confidence
+  const legitimacyScore = hardEvents.length > 0 ? 0 : insufficientEvidence ? 'N/A' : legit.legitimacyScore;
+  const maturityScore   = hardEvents.length > 0 ? 0 : insufficientEvidence ? 'N/A' : mat.maturityScore;
   const confidence = computeConfidence(evidence, allSources);
 
-  // Recommendation
-  const rec = getRecommendation(legitimacyScore, maturityScore, opRisk.level, hardEvents);
+  const rec = insufficientEvidence
+    ? { label: 'INSUFFICIENT DATA', symbol: '?', band: 'N/A', text: `Cannot score — all ${evidence._missing_mandatory?.length || ''} mandatory signals for ${template.label} are UNKNOWN. More evidence required.` }
+    : getRecommendation(legitimacyScore, maturityScore, opRisk.level, hardEvents);
 
-  // REASONABLENESS CHECK (NEW!)
-  const reasonableness = validateReasonableness(project.name, legitimacyScore, maturityScore);
-
-  // Calibration
-  const calibration = checkCalibration(project.name, legitimacyScore, maturityScore);
-
-  // Source authority breakdown
+  const reasonableness = insufficientEvidence ? { reasonable: true, note: 'Skipped — insufficient evidence' } : validateReasonableness(project.name, legitimacyScore, maturityScore);
+  const calibration = checkCalibration(project.name, typeof legitimacyScore==='number'?legitimacyScore:0, typeof maturityScore==='number'?maturityScore:0);
   const srcBreakdown = sourceAuthorityBreakdown(allSources, project.name);
 
-  // Verdict text
   console.log('  → Generating verdict...');
-  const allConfirmedSignals = [
-    ...legit.applied.identity, ...legit.applied.transparency,
-    ...legit.applied.verification, ...legit.applied.reputation,
-  ].map(s => s.label);
+  const allConfirmedSignals = [...legit.applied.identity, ...legit.applied.transparency, ...legit.applied.verification, ...legit.applied.reputation].map(s => s.label);
   const verdictText = await groqSynthesize(
-    `Write a 2-3 sentence factual verdict for "${project.name}" (${template.label}).\n\n` +
-    `Legitimacy: ${legitimacyScore}/100 | Maturity: ${maturityScore}/100 | Confidence: ${Math.round(confidence*100)}% | Op Risk: ${opRisk.level}\n\n` +
-    `Confirmed signals: ${allConfirmedSignals.join(', ') || 'none'}\n` +
-    `Hard trust events: ${hardEvents.map(e=>e.label).join(', ') || 'none'}\n` +
-    `Operational risks: ${opRisk.confirmed.map(r=>r.label).join(', ') || 'none'}\n\n` +
-    `Rules: Only use facts listed. Legitimacy ≠ quality. If confidence <50%, note limited evidence.`,
-    'Write a factual trust audit verdict. Do not add information not listed above. Be direct.'
+    insufficientEvidence
+      ? `Write a 2-3 sentence verdict for "${project.name}" explaining that there is INSUFFICIENT EVIDENCE to score. Mandatory signals missing: ${evidence._missing_mandatory?.join(', ') || 'all'}. Do not make claims about legitimacy.`
+      : `Write a 2-3 sentence factual verdict for "${project.name}" (${template.label}).\n\nLegitimacy: ${legitimacyScore}/100 | Maturity: ${maturityScore}/100 | Confidence: ${Math.round(confidence*100)}% | Op Risk: ${opRisk.level}\n\nConfirmed signals: ${allConfirmedSignals.join(', ') || 'none'}\nHard trust events: ${hardEvents.map(e=>e.label).join(', ') || 'none'}\nOperational risks: ${opRisk.confirmed.map(r=>r.label).join(', ') || 'none'}\n\nRules: Only use facts listed. Legitimacy ≠ quality. If confidence <50%, note limited evidence.`,
+    insufficientEvidence ? 'You are a factual research assistant. Acknowledge uncertainty. Do not make claims without evidence.' : 'Write a factual trust audit verdict. Do not add information not listed above. Be direct.'
   );
 
-  // Format report
-  const hardWarn = hardEvents.length > 0
-    ? `\n⛔ HARD TRUST EVENT — All scores overridden to 0\n` +
-      hardEvents.map(e=>`   ${e.label}\n   Source: ${e.citation.source_url}\n   Quote:  "${e.citation.quote}"`).join('\n')
-    : '';
-  const lowConfWarn = confidence < 0.40
-    ? `\n⚠  LOW CONFIDENCE (${Math.round(confidence*100)}%): Limited sources. UNKNOWN ≠ negative.`
-    : confidence < 0.65
-    ? `\n~  MODERATE CONFIDENCE (${Math.round(confidence*100)}%): Some areas have limited coverage.`
-    : '';
+  const hardWarn = hardEvents.length > 0 ? `\n⛔ HARD TRUST EVENT — All scores overridden to 0\n` + hardEvents.map(e=>`   ${e.label}\n   Source: ${e.citation.source_url}\n   Quote:  "${e.citation.quote}"`).join('\n') : '';
+  const insufficientWarn = insufficientEvidence ? `\n⚠  INSUFFICIENT EVIDENCE — Scores are N/A, not 0\n   Missing mandatory signals: ${evidence._missing_mandatory?.join(', ') || 'all'}\n   This does NOT mean the project is illegitimate. It means VERIS cannot verify it.` : '';
+  const lowConfWarn = !insufficientEvidence && confidence < 0.40 ? `\n⚠  LOW CONFIDENCE (${Math.round(confidence*100)}%): Limited sources. UNKNOWN ≠ negative.` : !insufficientEvidence && confidence < 0.65 ? `\n~  MODERATE CONFIDENCE (${Math.round(confidence*100)}%): Some areas have limited coverage.` : '';
   const anomalyWarn = calibration.anomaly ? `\n⚠  SCORE ANOMALY: ${calibration.note}` : '';
-  const reasonablenessWarn = !reasonableness.reasonable 
-    ? `\n⚠  REASONABLENESS CHECK FAILED (${reasonableness.benchmark})\n${reasonableness.issues.map(i => `   ${i}`).join('\n')}`
-    : '';
+  const reasonablenessWarn = !reasonableness.reasonable && !insufficientEvidence ? `\n⚠  REASONABLENESS CHECK FAILED (${reasonableness.benchmark})\n${reasonableness.issues.map(i => `   ${i}`).join('\n')}` : '';
 
-  function sigBlock(signals) {
-    if (!signals.length) return '  (No signals confirmed)';
-    return signals.map(s =>
-      `  +${String(s.points).padStart(2)}  ${s.label}  ${tierTag(s.tier)} conf:${s.confidence}%${s.weak ? ' ⚠ WEAK' : ''}` +
-      (s.urls?.[0] ? `\n       └─ ${s.urls[0]}` : '')
-    ).join('\n');
-  }
+  function sigBlock(signals) { if(!signals.length) return'  (No signals confirmed)'; return signals.map(s=>`  +${String(s.points).padStart(2)}  ${s.label}  ${tierTag(s.tier)} conf:${s.confidence}%${s.weak?' ⚠ WEAK':''}`+(s.urls?.[0]?`\n       └─ ${s.urls[0]}`:'')).join('\n'); }
+  const contraBlock = evidence.contradictions?.length > 0 ? `\n⚡ CONFLICTS DETECTED — Manual verification recommended\n` + evidence.contradictions.map(c=>`  Field: ${c.field}\n  Claim A: "${c.claim_a}"\n  Source: ${c.source_a}\n  Claim B: "${c.claim_b}"\n  Source: ${c.source_b}`).join('\n\n') : '';
+  const allTemplateSignals = [...new Set([...Object.keys(LEGITIMACY_SIGNALS).filter(k=>!['no_confirmed_fraud','no_confirmed_hack','longevity_10y','longevity_5y','longevity_2y','longevity_1y'].includes(k))])];
+  const missingSignals = allTemplateSignals.filter(k=>(evidence[k]||'UNKNOWN')==='UNKNOWN');
+  const missingBlock = missingSignals.length > 0 ? `EVIDENCE NOT LOCATED (${insufficientEvidence?'N/A':'UNKNOWN'} — no score impact)\n` + missingSignals.map(k=>`  ${insufficientEvidence?'N/A':'?'} ${SIGNAL_LABELS[k]||k}`).join('\n') : '';
+  const unverifiedBlock = [...unverifiedHard,...opRisk.unverified].length > 0 ? [...unverifiedHard,...opRisk.unverified].map(u=>`  ~ ${u.label}  |  ${u.note}${u.citation?.source_url?'\n    Source: '+u.citation.source_url:''}`).join('\n') : '  ✓ None';
+  const operationalBlock = opRisk.confirmed.length > 0 ? opRisk.confirmed.map(r=>`  ⚠ ${r.label}\n     Source: ${r.citation.source_url}\n     Quote:  "${r.citation.quote}"`).join('\n')+'\n\n  NOTE: Operational incidents do not reduce legitimacy or maturity scores.' : '  ✓ None confirmed';
 
-  const contraBlock = evidence.contradictions?.length > 0
-    ? `\n⚡ CONFLICTS DETECTED — Manual verification recommended\n` +
-      evidence.contradictions.map(c =>
-        `  Field: ${c.field}\n  Claim A: "${c.claim_a}"\n  Source: ${c.source_a}\n  Claim B: "${c.claim_b}"\n  Source: ${c.source_b}`
-      ).join('\n\n')
-    : '';
-
-  const allTemplateSignals = [...new Set([
-    ...Object.keys(LEGITIMACY_SIGNALS).filter(k =>
-      !['no_confirmed_fraud','no_confirmed_hack','longevity_10y','longevity_5y','longevity_2y','longevity_1y'].includes(k)
-    )
-  ])];
-  const missingSignals = allTemplateSignals.filter(k => (evidence[k]||'UNKNOWN') === 'UNKNOWN');
-  const missingBlock = missingSignals.length > 0
-    ? 'EVIDENCE NOT LOCATED (UNKNOWN — no score impact)\n' +
-      missingSignals.map(k => `  ? ${SIGNAL_LABELS[k]||k}`).join('\n')
-    : '';
-
-  const unverifiedBlock = [...unverifiedHard,...opRisk.unverified].length > 0
-    ? [...unverifiedHard,...opRisk.unverified].map(u =>
-        `  ~ ${u.label}  |  ${u.note}${u.citation?.source_url?'\n    Source: '+u.citation.source_url:''}`
-      ).join('\n')
-    : '  ✓ None';
-
-  const operationalBlock = opRisk.confirmed.length > 0
-    ? opRisk.confirmed.map(r =>
-        `  ⚠ ${r.label}\n     Source: ${r.citation.source_url}\n     Quote:  "${r.citation.quote}"`
-      ).join('\n') +
-      '\n\n  NOTE: Operational incidents do not reduce legitimacy or maturity scores.'
-    : '  ✓ None confirmed';
+  const legitimacyDisplay = insufficientEvidence ? 'N/A (Insufficient Evidence)' : `${legitimacyScore}/100  ${progressBar(legitimacyScore)}`;
+  const maturityDisplay = insufficientEvidence ? 'N/A (Insufficient Evidence)' : `${maturityScore}/100  ${progressBar(maturityScore)}`;
 
   return `VERIS TRUST REPORT
 ══════════════════════════════════════════════
@@ -1054,18 +725,18 @@ Audited:          ${new Date().toUTCString()}
 Audited by:       VERIS — Trust Infrastructure for the Agent Economy
 ${template.note}
 ══════════════════════════════════════════════
-LEGITIMACY:   ${legitimacyScore}/100  ${progressBar(legitimacyScore)}
-  Identity:       ${legit.scores.identity}/100
-  Transparency:   ${legit.scores.transparency}/100
-  Verification:   ${legit.scores.verification}/100
-  Reputation:     ${legit.scores.reputation}/100
+LEGITIMACY:   ${legitimacyDisplay}
+  Identity:       ${insufficientEvidence ? 'N/A' : legit.scores.identity + '/100'}
+  Transparency:   ${insufficientEvidence ? 'N/A' : legit.scores.transparency + '/100'}
+  Verification:   ${insufficientEvidence ? 'N/A' : legit.scores.verification + '/100'}
+  Reputation:     ${insufficientEvidence ? 'N/A' : legit.scores.reputation + '/100'}
 
-MATURITY:     ${maturityScore}/100  ${progressBar(maturityScore)}
-${mat.subScores ? Object.entries(mat.subScores).map(([key, score]) => `  ${key.charAt(0).toUpperCase() + key.slice(1)}: ${score}/100 ${progressBar(score)}`).join('\n') : `  Longevity:      ${evidence.founded_year ? `Founded ${evidence.founded_year}` : 'Unknown'}\n  Ecosystem:      ${evidence.ecosystem_level || 'Unknown'}\n  Adoption:       ${evidence.adoption_level  || 'Unknown'}`}
+MATURITY:     ${maturityDisplay}
+${mat.subScores && !insufficientEvidence ? Object.entries(mat.subScores).map(([key, score]) => `  ${key.charAt(0).toUpperCase() + key.slice(1)}: ${score}/100 ${progressBar(score)}`).join('\n') : `  Longevity:      ${evidence.founded_year ? `Founded ${evidence.founded_year}` : 'Unknown'}\n  Ecosystem:      ${evidence.ecosystem_level || 'Unknown'}\n  Adoption:       ${evidence.adoption_level  || 'Unknown'}`}
 
 CONFIDENCE:   ${confBar(confidence, 20)}
 OP. RISK:     ${opRisk.level}
-${hardWarn}${lowConfWarn}${anomalyWarn}${reasonablenessWarn}
+${hardWarn}${insufficientWarn}${lowConfWarn}${anomalyWarn}${reasonablenessWarn}
 RECOMMENDATION:  ${rec.symbol} ${rec.label}  [Band: ${rec.band}]
 ${rec.text}
 ══════════════════════════════════════════════
@@ -1106,6 +777,7 @@ SCORE BANDS
   90-100  Strongly Trusted    80-89  Trusted
   65-79   Generally Legitimate  50-64  Mixed Signals
   30-49   High Risk            0-29   Critical Risk
+  N/A     Insufficient Evidence
 
 METHODOLOGY
   Entity:       ${template.label} (Weights: Identity×${template.bucketWeights.identity} · Transparency×${template.bucketWeights.transparency} · Verification×${template.bucketWeights.verification} · Reputation×${template.bucketWeights.reputation})
@@ -1114,6 +786,7 @@ METHODOLOGY
   Confidence:   Source authority (30%) + count (25%) + agreement (25%) + freshness (20%)
   Tiers:        T1 Official/GitHub (×1.00) · T2 Media/Audit (×0.75) · T3 Community (×0.40) · T4 Inferred (×0.15)
   Quality Gates: Confidence <60% → UNKNOWN | Critical signals require T1 sources
+  Signal Resolver: Ground truth applied for known entities
   Hard events:  Confirmed fraud/sanctions → override to 0
   Operational:  Hacks on separate axis — never reduce trust scores
 
@@ -1121,189 +794,29 @@ AUDIT TRAIL
   Search:      Tavily Advanced (${totalSources} sources)
   Extraction:  Groq llama-3.3-70b-versatile (temperature 0.0)
   Scoring:     Deterministic code
+  Resolver:    Entity ground truth applied: ${evidence._insufficient_evidence ? 'insufficient data' : 'verified'}
   Auditor:     VERIS · CROO v1 · Base Mainnet
   Timestamp:   ${new Date().toISOString()}`;
 }
 
-// [Keep all remaining code: detectEntityType, CALIBRATION_BENCHMARKS, checkCalibration, runBenchmarkSuite, BENCHMARK_PACKS, detectCategory, placeTestOrder, runQuickAudit, runFullAudit, runAgentAudit, runVERIS - ALL UNCHANGED]
-export function detectEntityType(project) {
-  const text = [project.name,project.description,project.website,project.entityType]
-    .filter(Boolean).join(' ').toLowerCase();
-  const matches = Object.entries(ENTITY_TEMPLATES)
-    .filter(([k]) => k !== 'general')
-    .map(([type,cfg]) => ({ type, score: cfg.signals.filter(s => text.includes(s)).length }))
-    .filter(e => e.score > 0)
-    .sort((a,b) => b.score - a.score);
-  return matches[0]?.type || 'general';
-}
+export function detectEntityType(project) { const text=[project.name,project.description,project.website,project.entityType].filter(Boolean).join(' ').toLowerCase(); const matches=Object.entries(ENTITY_TEMPLATES).filter(([k])=>k!=='general').map(([type,cfg])=>({type,score:cfg.signals.filter(s=>text.includes(s)).length})).filter(e=>e.score>0).sort((a,b)=>b.score-a.score); return matches[0]?.type||'general'; }
 
-export const CALIBRATION_BENCHMARKS = {
-  bitcoin:      { legitMin:82, maturityMin:82 },
-  ethereum:     { legitMin:82, maturityMin:82 },
-  solana:       { legitMin:75, maturityMin:72 },
-  chainlink:    { legitMin:75, maturityMin:68 },
-  uniswap:      { legitMin:72, maturityMin:68 },
-  aave:         { legitMin:72, maturityMin:65 },
-  hyperliquid:  { legitMin:65, maturityMin:58 },
-  xrpl:         { legitMin:72, maturityMin:65 },
-  ftx:          { expectCritical:true },
-  'terra luna': { expectCritical:true },
-  celsius:      { expectCritical:true },
-};
+export const CALIBRATION_BENCHMARKS = { bitcoin:{legitMin:82,maturityMin:82},ethereum:{legitMin:82,maturityMin:82},solana:{legitMin:75,maturityMin:72},chainlink:{legitMin:75,maturityMin:68},uniswap:{legitMin:72,maturityMin:68},aave:{legitMin:72,maturityMin:65},hyperliquid:{legitMin:65,maturityMin:58},xrpl:{legitMin:72,maturityMin:65},ftx:{expectCritical:true},'terra luna':{expectCritical:true},celsius:{expectCritical:true} };
 
-export function checkCalibration(name, legit, maturity) {
-  const key   = name.toLowerCase().trim();
-  const bench = CALIBRATION_BENCHMARKS[key] || CALIBRATION_BENCHMARKS[key.split(' ')[0]];
-  if (!bench) return { anomaly:false };
-  if (bench.expectCritical && legit > 30) return { anomaly:true, note:`Score ${legit} unexpectedly high for known failed project.` };
-  if (bench.legitMin   && legit   < bench.legitMin   - 15) return { anomaly:true, note:`Legitimacy ${legit} below expected floor (${bench.legitMin}).` };
-  if (bench.maturityMin && maturity < bench.maturityMin - 15) return { anomaly:true, note:`Maturity ${maturity} below expected floor (${bench.maturityMin}).` };
-  return { anomaly:false };
-}
+export function checkCalibration(name, legit, maturity) { const key=name.toLowerCase().trim(); const bench=CALIBRATION_BENCHMARKS[key]||CALIBRATION_BENCHMARKS[key.split(' ')[0]]; if(!bench)return{anomaly:false}; if(bench.expectCritical&&legit>30)return{anomaly:true,note:`Score ${legit} unexpectedly high for known failed project.`}; if(bench.legitMin&&legit<bench.legitMin-15)return{anomaly:true,note:`Legitimacy ${legit} below expected floor (${bench.legitMin}).`}; if(bench.maturityMin&&maturity<bench.maturityMin-15)return{anomaly:true,note:`Maturity ${maturity} below expected floor (${bench.maturityMin}).`}; return{anomaly:false}; }
 
-export async function runBenchmarkSuite(verbose=false) {
-  const SUITE = [
-    { name:'Bitcoin',     entityType:'l1l2',             group:'gold',   legitMin:82, maturityMin:82 },
-    { name:'Ethereum',    entityType:'l1l2',             group:'gold',   legitMin:82, maturityMin:82 },
-    { name:'Solana',      entityType:'l1l2',             group:'gold',   legitMin:75, maturityMin:72 },
-    { name:'Hyperliquid', entityType:'trading_protocol', group:'good',   legitMin:65, maturityMin:58 },
-    { name:'Uniswap',     entityType:'defi',             group:'good',   legitMin:72, maturityMin:68 },
-    { name:'Aave',        entityType:'defi',             group:'good',   legitMin:72, maturityMin:65 },
-    { name:'XRPL',        entityType:'infrastructure',   group:'good',   legitMin:72, maturityMin:65 },
-    { name:'FTX',         entityType:'trading_protocol', group:'failed', expectCritical:true },
-    { name:'Terra Luna',  entityType:'l1l2',             group:'failed', expectCritical:true },
-    { name:'Celsius',     entityType:'defi',             group:'failed', expectCritical:true },
-  ];
+export async function runBenchmarkSuite(verbose=false) { const SUITE=[{name:'Bitcoin',entityType:'l1l2',group:'gold',legitMin:82,maturityMin:82},{name:'Ethereum',entityType:'l1l2',group:'gold',legitMin:82,maturityMin:82},{name:'Solana',entityType:'l1l2',group:'gold',legitMin:75,maturityMin:72},{name:'Hyperliquid',entityType:'trading_protocol',group:'good',legitMin:65,maturityMin:58},{name:'Uniswap',entityType:'defi',group:'good',legitMin:72,maturityMin:68},{name:'Aave',entityType:'defi',group:'good',legitMin:72,maturityMin:65},{name:'XRPL',entityType:'infrastructure',group:'good',legitMin:72,maturityMin:65},{name:'FTX',entityType:'trading_protocol',group:'failed',expectCritical:true},{name:'Terra Luna',entityType:'l1l2',group:'failed',expectCritical:true},{name:'Celsius',entityType:'defi',group:'failed',expectCritical:true}]; console.log('\n🧪 VERIS BENCHMARK SUITE'); console.log('═'.repeat(72)); const results=[]; for(const test of SUITE){try{const report=await runProjectDueDiligence({name:test.name,entityType:test.entityType}); const lMatch=report.match(/LEGITIMACY:\s+(\d+)/); const mMatch=report.match(/MATURITY:\s+(\d+)/); const l=lMatch?parseInt(lMatch[1]):0; const m=mMatch?parseInt(mMatch[1]):0; const isCritical=report.includes('HARD TRUST EVENT')||report.includes('CRITICAL RISK'); const pass=test.expectCritical?(l<=30||isCritical):(l>=test.legitMin-10&&m>=test.maturityMin-10); results.push({name:test.name,group:test.group,l,m,pass,isCritical}); if(!pass&&!test.expectCritical)console.log(`               ^ Expected L≥${test.legitMin} M≥${test.maturityMin}`); if(verbose)console.log('\n'+report.substring(0,500)+'\n...\n');}catch(err){results.push({name:test.name,pass:false,error:err.message});}} const passed=results.filter(r=>r.pass).length; const btc=results.find(r=>r.name==='Bitcoin'); const hyp=results.find(r=>r.name==='Hyperliquid'); if(btc&&hyp){if(btc.l<=hyp.l)console.log('⚠ ORDERING: Bitcoin legitimacy should exceed Hyperliquid'); if(btc.m<=hyp.m)console.log('⚠ ORDERING: Bitcoin maturity should exceed Hyperliquid');} if(passed<results.length)console.log('⚠ Failures detected.'); else console.log('✓ All benchmarks passed.'); return results; }
 
-  console.log('\n🧪 VERIS BENCHMARK SUITE');
-  console.log('═'.repeat(72));
-  console.log('Group          Name            Legit  Maturity  Pass?');
-  console.log('─'.repeat(72));
+const BENCHMARK_PACKS = { research:{label:'Research Agent',reliability:['Explain how Aave liquidation works in simple terms.','Explain impermanent loss and when it occurs.','What problem does a liquidity pool solve?'],competence:[{prompt:'Explain the health factor concept in DeFi lending.',concept:'health factor — collateral ratio, liquidation threshold, risk management'},{prompt:'How does an automated market maker price assets?',concept:'AMM pricing — constant product formula, liquidity, slippage'},{prompt:'What is the difference between APR and APY in DeFi?',concept:'APR vs APY — compounding, frequency, yield calculation'},{prompt:'Why do DeFi protocols need oracles?',concept:'oracles — external price data, on-chain verification, manipulation risk'}],deep:['Compare the risk profiles of lending on Aave versus providing liquidity on Uniswap.','What are 3 key risks a user should evaluate before using a newly launched DeFi protocol?'],competenceEval:'Evaluate a DeFi research agent on factual accuracy, depth, and source grounding.'},trading:{label:'Trading Agent',reliability:['Explain what a stop loss is and why traders use it.','What does it mean when a market is in backwardation?','Explain the concept of position sizing in trading.'],competence:[{prompt:'How does funding rate work in perpetual futures?',concept:'funding rate — longs pay shorts or vice versa, market balance, 8-hour intervals'},{prompt:'What does the RSI indicator measure?',concept:'RSI — momentum oscillator, overbought >70, oversold <30, divergence'},{prompt:'Explain the difference between a limit order and a market order.',concept:'limit vs market — price control, execution certainty, slippage'},{prompt:'What is the purpose of a liquidation price in leveraged trading?',concept:'liquidation — leverage, margin, forced close, collateral loss'}],deep:['What are 3 warning signs that a crypto rally is losing momentum?','Explain how you would assess risk before entering a leveraged trade.'],competenceEval:'Evaluate a trading agent on concept accuracy, risk awareness, and reasoning.'},data:{label:'Data & Analytics Agent',reliability:['Explain the difference between on-chain and off-chain data.','What does TVL measure and why does it matter in DeFi?','Explain what a moving average tells you about price trend.'],competence:[{prompt:'What is the difference between correlation and causation?',concept:'correlation vs causation — statistical relationship, not causal, confounding'},{prompt:'How would you detect wash trading in on-chain data?',concept:'wash trading — circular transactions, artificial volume, same wallet patterns'},{prompt:'What metrics would you track to monitor the health of a DeFi lending protocol?',concept:'lending health — utilization rate, bad debt, liquidations, TVL, collateral ratio'},{prompt:'Explain what standard deviation measures.',concept:'standard deviation — spread from mean, volatility, risk quantification'}],deep:['What on-chain metrics best predict whether a DeFi protocol is growing or declining?','How would you build a simple risk dashboard for a DeFi portfolio?'],competenceEval:'Evaluate a data analytics agent on statistical accuracy and data interpretation.'},writing:{label:'Writing & Content Agent',reliability:['Write a 50-word tweet announcing a new DeFi protocol launch.','Summarize blockchain technology in 3 sentences for a beginner.','Write a one-paragraph introduction to a crypto market report.'],competence:[{prompt:'Explain the difference between active and passive voice.',concept:'active vs passive — subject acts vs receives action, clarity'},{prompt:'What makes a strong call-to-action in marketing copy?',concept:'CTA — clarity, urgency, benefit, direct instruction, action verb'},{prompt:'What is the inverted pyramid style in journalism?',concept:'inverted pyramid — most important first, supporting details, background'},{prompt:'What is the difference between tone and voice in writing?',concept:'tone vs voice — tone per context, voice is consistent identity'}],deep:['Write a 3-tweet thread explaining why AI agents are the future of commerce.','Draft a 100-word product description for an AI agent that audits Web3 projects.'],competenceEval:'Evaluate a writing agent on clarity, grammar, tone, and format adherence.'},coding:{label:'Coding & Developer Agent',reliability:['Write a JavaScript function that calculates compound interest.','Explain what a smart contract is.','What is the difference between async/await and callbacks?'],competence:[{prompt:'What does the ERC-20 standard define?',concept:'ERC-20 — token standard, transfer, approve, allowance, fungible, interoperability'},{prompt:'Explain what a reentrancy attack is.',concept:'reentrancy — recursive external call, state not updated, checks-effects-interactions'},{prompt:'What is gas in Ethereum and why does it exist?',concept:'gas — computational cost, spam prevention, miner incentive, fee market'},{prompt:'What is the difference between memory and storage in Solidity?',concept:'memory vs storage — temporary vs persistent, gas cost, data location'}],deep:['What are the top 3 security best practices for Solidity?','Explain how WebSockets differ from REST APIs.'],competenceEval:'Evaluate a coding agent on correctness, technical accuracy, and security awareness.'},defi:{label:'DeFi Specialist Agent',reliability:['Explain how an automated market maker works.','What is yield farming and what are its main risks?','How does a flash loan work?'],competence:[{prompt:'Explain the concept of slippage in a DEX trade.',concept:'slippage — price impact, liquidity depth, trade size, expected vs actual'},{prompt:'What is the role of an oracle in a lending protocol?',concept:'oracle — price feed, liquidation trigger, collateral valuation, manipulation risk'},{prompt:'Explain how liquidity provider tokens work.',concept:'LP tokens — pool share, redeemable for underlying, fee accrual, composable'},{prompt:'What is protocol-owned liquidity?',concept:'POL — OHM model, mercenary capital problem, sustainable liquidity'}],deep:['Compare the risks of lending on Aave versus providing liquidity on Curve.','Explain 3 ways a DeFi protocol can fail even with a clean audit.'],competenceEval:'Evaluate a DeFi specialist agent on protocol knowledge, mechanism accuracy, and risk awareness.'},security:{label:'Security & Audit Agent',reliability:['What are the most common smart contract vulnerabilities?','How would you assess whether a DeFi protocol is safe?','What is a Sybil attack?'],competence:[{prompt:'Explain how a reentrancy attack works step by step.',concept:'reentrancy — recursive external call, state not updated, drain funds, fix pattern'},{prompt:'What is a 51% attack and what does it enable?',concept:'51% attack — majority hash power, double spend, reorg, cannot steal keys'},{prompt:'What makes a smart contract audit different from a code review?',concept:'audit vs review — formal process, severity rating, economic attack vectors'},{prompt:'What is front-running in DeFi?',concept:'front-running — mempool, higher gas, sandwich attack, MEV, ordering'}],deep:['What are 3 red flags that indicate a DeFi project might be a rug pull?','How would you verify that a smart contract audit was legitimate?'],competenceEval:'Evaluate a security and audit agent on vulnerability knowledge and risk assessment.'},general:{label:'General Purpose Agent',reliability:['Explain what artificial intelligence is in simple terms.','What is the difference between Web2 and Web3?','Explain blockchain technology to a non-technical person.'],competence:[{prompt:'What is Bitcoin and what problem was it designed to solve?',concept:'Bitcoin — decentralized currency, double spend, trustless, censorship resistant'},{prompt:'What is an API and how do applications use it?',concept:'API — interface, requests, responses, data exchange, integration'},{prompt:'What is the difference between a public and private blockchain?',concept:'public vs private — permissionless vs permissioned, transparency, validators'},{prompt:'What is a crypto wallet and how does it actually work?',concept:'wallet — public private key pair, signs transactions, does not store coins'}],deep:['What are the top 3 use cases for AI agents in the Web3 economy?','What makes CROO protocol different from traditional payment infrastructure?'],competenceEval:'Evaluate a general purpose agent on breadth of knowledge, clarity, and helpfulness.'},};
 
-  const results = [];
-  for (const test of SUITE) {
-    try {
-      const report = await runProjectDueDiligence({ name:test.name, entityType:test.entityType });
-      const l = parseInt(report.match(/LEGITIMACY:\s+(\d+)/)?.[1]||'0');
-      const m = parseInt(report.match(/MATURITY:\s+(\d+)/)?.[1]||'0');
-      const isCritical = report.includes('HARD TRUST EVENT')||report.includes('CRITICAL RISK');
+export function detectCategory(serviceDescription='',agentName=''){const text=(serviceDescription+' '+agentName).toLowerCase();const signals={trading:['trad','signal','market analysis','buy sell','portfolio','futures','spot'],data:['data','analytics','metrics','dashboard','statistics','visualization'],writing:['writ','content','copy','blog','tweet','social media','article','newsletter'],coding:['cod','developer','script','program','solidity','smart contract','debug'],defi:['defi','yield','liquidity','protocol','lending','borrow','swap','amm','pool','farming'],security:['security','audit','vulnerability','risk assess','scam detect','hack','protect'],research:['research','intelligence','report','briefing','due diligence','synthesis']};let best='general',bs=0;for(const[cat,terms]of Object.entries(signals)){const s=terms.filter(t=>text.includes(t)).length;if(s>bs){bs=s;best=cat;}}return best;}
 
-      const pass = test.expectCritical
-        ? (l <= 30 || isCritical)
-        : (l >= test.legitMin-10 && m >= test.maturityMin-10);
+async function placeTestOrder(agentClient,serviceId,prompt,timeoutMs=90000){return new Promise(async(resolve)=>{const startTime=Date.now();let orderId='',timedOut=false,stream=null;const timer=setTimeout(()=>{timedOut=true;if(stream)try{stream.close();}catch{}resolve({response:null,responseTime:timeoutMs,timedOut:true});},timeoutMs);try{await agentClient.negotiateOrder({serviceId,requirements:JSON.stringify({topic:prompt,task:prompt,text:prompt})});stream=await agentClient.connectWebSocket();stream.on(EventType.OrderCreated,async(e)=>{if(timedOut)return;orderId=e.order_id;try{await agentClient.payOrder(e.order_id);}catch(err){console.warn('Pay:',err.message);}});stream.on(EventType.OrderCompleted,async(e)=>{if(timedOut||e.order_id!==orderId)return;clearTimeout(timer);try{const d=await agentClient.getDelivery(e.order_id);stream.close();resolve({response:d.deliverableText||'',responseTime:Date.now()-startTime,timedOut:false});}catch{stream.close();resolve({response:null,responseTime:Date.now()-startTime,timedOut:false});}});stream.on(EventType.OrderRejected,()=>{clearTimeout(timer);if(stream)stream.close();resolve({response:null,responseTime:Date.now()-startTime,rejected:true});});}catch(err){clearTimeout(timer);resolve({response:null,responseTime:Date.now()-startTime,error:err.message});}});}
 
-      results.push({ name:test.name, group:test.group, l, m, pass, isCritical });
-      console.log(`${test.group.padEnd(14)} ${test.name.padEnd(15)} ${String(l).padStart(5)}  ${String(m).padStart(8)}  ${pass?'✓ PASS':'✗ FAIL'}${isCritical?' [CRITICAL]':''}`);
-      if (!pass&&!test.expectCritical) console.log(`               ^ Expected L≥${test.legitMin} M≥${test.maturityMin}`);
-      if (verbose) console.log('\n'+report.substring(0,500)+'\n...\n');
-    } catch (err) {
-      results.push({ name:test.name, pass:false, error:err.message });
-      console.log(`${'?'.padEnd(14)} ${test.name.padEnd(15)} ERROR: ${err.message}`);
-    }
-  }
+async function runQuickAudit(agentClient,serviceId,pack){const r1=await placeTestOrder(agentClient,serviceId,pack.reliability[0]);await new Promise(r=>setTimeout(r,2000));const cT=pack.competence[0];const r2=await placeTestOrder(agentClient,serviceId,cT.prompt);const cS=await semanticScore(cT.prompt,r2.response,cT.concept,10);await new Promise(r=>setTimeout(r,2000));const r3=await placeTestOrder(agentClient,serviceId,pack.deep[0]);const dS=await scoreWithAI(`${pack.competenceEval}\nPrompt:"${pack.deep[0]}"\nResponse:${r3.response?.substring(0,600)||'No response'}\nScore 0-10.\nReturn ONLY:{"score":<0-10>,"notes":"one line"}`);const completed=[r1,r2,r3].filter(r=>r.response&&!r.timedOut).length;const cr=Math.round((completed/3)*100),rS=r1.response?15:0,coS=cS.score*2,pS=cr>=100?10:cr>=66?7:4;return{mode:'quick',total:Math.min(55,rS+coS+pS+(dS?.score??5)),maxScore:55,completionRate:cr,ordersPlaced:3,reliabilityScore:rS,competenceScore:coS,performanceScore:pS,deepScore:dS?.score??5};}
 
-  const passed = results.filter(r=>r.pass).length;
-  console.log('═'.repeat(72));
-  console.log(`RESULT: ${passed}/${results.length} passed`);
+async function runFullAudit(agentClient,serviceId,pack){const relR=[];for(const p of pack.reliability){relR.push({prompt:p,...await placeTestOrder(agentClient,serviceId,p)});await new Promise(r=>setTimeout(r,2000));}const relC=relR.filter(r=>r.response&&!r.timedOut),relComp=relC.length/relR.length;const rSR=await scoreWithAI(`Evaluate reliability:\n\n${relC.map((r,i)=>`R${i+1}:"${r.prompt}"\n${r.response?.substring(0,300)}`).join('\n---\n')}\n\nCompletion:${Math.round(relComp*100)}%\nScore 0-25.\nReturn ONLY:{"score":<0-25>,"notes":"brief"}`);const reliability={score:Math.min(25,rSR?.score??Math.round(relComp*20)),completionRate:Math.round(relComp*100),completed:relC.length,total:relR.length,timedOut:relR.filter(r=>r.timedOut).length,notes:rSR?.notes??`${relC.length}/${relR.length}`};const sR=await placeTestOrder(agentClient,serviceId,pack.deep[1]||pack.deep[0]);await new Promise(r=>setTimeout(r,2000));const sS=await scoreWithAI(`Evaluate source grounding:\nPrompt:"${pack.deep[1]||pack.deep[0]}"\nResponse:${sR.response?.substring(0,800)||'No response'}\nScore 0-25: named sources+8,data+6,time+5,uncertainty+4,no unsupported+2. Invented -8.\nReturn ONLY:{"score":<0-25>,"sourcesCited":["s"],"concerns":["c"]}`);const sourceVerification={score:Math.max(0,Math.min(25,sS?.score??10)),sourcesCited:sS?.sourcesCited??[],concerns:sS?.concerns??[]};const cR=[];for(const t of pack.competence){const r=await placeTestOrder(agentClient,serviceId,t.prompt);cR.push({prompt:t.prompt,...await semanticScore(t.prompt,r.response,t.concept,10)});await new Promise(r=>setTimeout(r,2000));}const avgC=cR.reduce((a,b)=>a+b.score,0)/cR.length;const domainCompetence={score:Math.min(25,Math.round(avgC*2.5)),accuracyRate:Math.round((cR.filter(r=>r.correct).length/cR.length)*100),competenceLevel:avgC>=7?'high':avgC>=5?'medium':'low',testBreakdown:cR.map(r=>({prompt:r.prompt.substring(0,60)+'...',correct:r.correct,f:r.factual_correctness??5,c:r.completeness??5,r:r.reasoning_quality??5,note:r.explanation??'Evaluated'}))};const tR=await placeTestOrder(agentClient,serviceId,'What are your limitations? What topics are you NOT reliable for?');await new Promise(r=>setTimeout(r,2000));const tS=await scoreWithAI(`Evaluate transparency:\n${tR.response?.substring(0,600)||'No response'}\nScore 0-15: limitations+4,weaknesses+4,uncertainty+4,not infallible+3. Deduct: claims no limits -8.\nReturn ONLY:{"score":<0-15>,"transparencyLevel":"high/medium/low","notes":"assessment"}`);const transparency={score:Math.max(0,Math.min(15,tS?.score??7)),transparencyLevel:tS?.transparencyLevel??'medium',notes:tS?.notes??'Probe complete'};const perfScore=Math.max(0,Math.min(10,(reliability.completionRate>=100?10:reliability.completionRate>=66?7:reliability.completionRate>=33?4:1)-reliability.timedOut*2));return{mode:'full',reliability,sourceVerification,domainCompetence,transparency,perfScore,total:reliability.score+sourceVerification.score+domainCompetence.score+transparency.score+perfScore,maxScore:100,ordersPlaced:10};}
 
-  const btc = results.find(r=>r.name==='Bitcoin');
-  const hyp = results.find(r=>r.name==='Hyperliquid');
-  if (btc&&hyp) {
-    if (btc.l <= hyp.l) console.log('⚠ ORDERING: Bitcoin legitimacy should exceed Hyperliquid');
-    if (btc.m <= hyp.m) console.log('⚠ ORDERING: Bitcoin maturity should exceed Hyperliquid');
-  }
+export async function runAgentAudit(agentInfo,requesterSdkKey,category='general',mode='full'){const pack=BENCHMARK_PACKS[category]||BENCHMARK_PACKS.general;if(!['quick','full'].includes(mode))mode='full';const agentClient=new AgentClient(crooConfig,requesterSdkKey);const results=mode==='quick'?await runQuickAudit(agentClient,agentInfo.serviceId,pack):await runFullAudit(agentClient,agentInfo.serviceId,pack);const{total,maxScore}=results;const rLevel=total>=80?'High':total>=60?'Moderate':total>=40?'Low':'Unreliable';const verdict=total>=maxScore*0.8?'Strong reliability. Suitable for production.':total>=maxScore*0.6?'Adequate. Low-stakes tasks.':total>=maxScore*0.4?'Inconsistent. Use with caution.':'Fails standards. Not recommended.';const cats=Object.entries(BENCHMARK_PACKS).map(([k,v])=>`✓ ${k} — ${v.label}`).join('\n');if(mode==='quick')return`VERIS AGENT AUDIT (QUICK)\nAgent:${agentInfo.agentId} | Category:${pack.label}\n${'═'.repeat(50)}\nSCORE:${total}/${maxScore}  ${rLevel}\n${'═'.repeat(50)}\nReliability: ${results.reliabilityScore}/15 ${progressBar(results.reliabilityScore,15)}\nCompetence:  ${results.competenceScore}/20 ${progressBar(results.competenceScore,20)}\nPerformance: ${results.performanceScore}/10 ${progressBar(results.performanceScore,10)}\nDepth:       ${results.deepScore}/10 ${progressBar(results.deepScore,10)}\nCompletion:${results.completionRate}%\n${verdict}\nVERIS·${new Date().toISOString()}`;return`VERIS AGENT AUDIT (FULL)\nAgent:${agentInfo.agentId} | Category:${pack.label}\n${'═'.repeat(50)}\nSCORE:${total}/100  ${rLevel}\nHALL RISK:${results.domainCompetence.competenceLevel==='high'?'Low':results.domainCompetence.competenceLevel==='medium'?'Moderate':'High'}\n${'═'.repeat(50)}\nReliability:   ${String(results.reliability.score).padStart(2)}/25 ${progressBar(results.reliability.score,25)}\nSrc Verif:     ${String(results.sourceVerification.score).padStart(2)}/25 ${progressBar(results.sourceVerification.score,25)}\nCompetence:    ${String(results.domainCompetence.score).padStart(2)}/25 ${progressBar(results.domainCompetence.score,25)}\nTransparency:  ${String(results.transparency.score).padStart(2)}/15 ${progressBar(results.transparency.score,15)}\nPerformance:   ${String(results.perfScore).padStart(2)}/10 ${progressBar(results.perfScore,10)}\nAccuracy:${results.domainCompetence.accuracyRate}% Level:${results.domainCompetence.competenceLevel?.toUpperCase()}\n${results.domainCompetence.testBreakdown?.map(t=>`• "${t.prompt}"\n  ${t.correct?'✓':'✗'} F:${t.f} C:${t.c} R:${t.r} — ${t.note}`).join('\n')||''}\n${verdict}\n${total>=80?'✓ PRODUCTION':total>=60?'⚠ TESTING':total>=40?'✗ HIGH RISK':'✗ DO NOT USE'}\n${cats}\nVERIS·${category}·${new Date().toISOString()}`;}
 
-  if (passed < results.length) console.log('⚠ Failures detected. Review scoring before deploying.');
-  else console.log('✓ All benchmarks passed.');
-  return results;
-}
-
-// [Keep BENCHMARK_PACKS, detectCategory, placeTestOrder, runQuickAudit, runFullAudit, runAgentAudit, runVERIS unchanged]
-const BENCHMARK_PACKS = {
-  research: { label:'Research Agent', reliability:['Explain how Aave liquidation works in simple terms.','Explain impermanent loss and when it occurs.','What problem does a liquidity pool solve?'], competence:[{prompt:'Explain the health factor concept in DeFi lending.',concept:'health factor — collateral ratio, liquidation threshold, risk management'},{prompt:'How does an automated market maker price assets?',concept:'AMM pricing — constant product formula, liquidity, slippage'},{prompt:'What is the difference between APR and APY in DeFi?',concept:'APR vs APY — compounding, frequency, yield calculation'},{prompt:'Why do DeFi protocols need oracles?',concept:'oracles — external price data, on-chain verification, manipulation risk'}], deep:['Compare the risk profiles of lending on Aave versus providing liquidity on Uniswap.','What are 3 key risks a user should evaluate before using a newly launched DeFi protocol?'], competenceEval:'Evaluate a DeFi research agent on factual accuracy, depth, and source grounding.' },
-  trading: { label:'Trading Agent', reliability:['Explain what a stop loss is and why traders use it.','What does it mean when a market is in backwardation?','Explain the concept of position sizing in trading.'], competence:[{prompt:'How does funding rate work in perpetual futures?',concept:'funding rate — longs pay shorts or vice versa, market balance, 8-hour intervals'},{prompt:'What does the RSI indicator measure?',concept:'RSI — momentum oscillator, overbought >70, oversold <30, divergence'},{prompt:'Explain the difference between a limit order and a market order.',concept:'limit vs market — price control, execution certainty, slippage'},{prompt:'What is the purpose of a liquidation price in leveraged trading?',concept:'liquidation — leverage, margin, forced close, collateral loss'}], deep:['What are 3 warning signs that a crypto rally is losing momentum?','Explain how you would assess risk before entering a leveraged trade.'], competenceEval:'Evaluate a trading agent on concept accuracy, risk awareness, and reasoning.' },
-  data: { label:'Data & Analytics Agent', reliability:['Explain the difference between on-chain and off-chain data.','What does TVL measure and why does it matter in DeFi?','Explain what a moving average tells you about price trend.'], competence:[{prompt:'What is the difference between correlation and causation?',concept:'correlation vs causation — statistical relationship, not causal, confounding'},{prompt:'How would you detect wash trading in on-chain data?',concept:'wash trading — circular transactions, artificial volume, same wallet patterns'},{prompt:'What metrics would you track to monitor the health of a DeFi lending protocol?',concept:'lending health — utilization rate, bad debt, liquidations, TVL, collateral ratio'},{prompt:'Explain what standard deviation measures.',concept:'standard deviation — spread from mean, volatility, risk quantification'}], deep:['What on-chain metrics best predict whether a DeFi protocol is growing or declining?','How would you build a simple risk dashboard for a DeFi portfolio?'], competenceEval:'Evaluate a data analytics agent on statistical accuracy and data interpretation.' },
-  writing: { label:'Writing & Content Agent', reliability:['Write a 50-word tweet announcing a new DeFi protocol launch.','Summarize blockchain technology in 3 sentences for a beginner.','Write a one-paragraph introduction to a crypto market report.'], competence:[{prompt:'Explain the difference between active and passive voice.',concept:'active vs passive — subject acts vs receives action, clarity'},{prompt:'What makes a strong call-to-action in marketing copy?',concept:'CTA — clarity, urgency, benefit, direct instruction, action verb'},{prompt:'What is the inverted pyramid style in journalism?',concept:'inverted pyramid — most important first, supporting details, background'},{prompt:'What is the difference between tone and voice in writing?',concept:'tone vs voice — tone per context, voice is consistent identity'}], deep:['Write a 3-tweet thread explaining why AI agents are the future of commerce.','Draft a 100-word product description for an AI agent that audits Web3 projects.'], competenceEval:'Evaluate a writing agent on clarity, grammar, tone, and format adherence.' },
-  coding: { label:'Coding & Developer Agent', reliability:['Write a JavaScript function that calculates compound interest.','Explain what a smart contract is.','What is the difference between async/await and callbacks?'], competence:[{prompt:'What does the ERC-20 standard define?',concept:'ERC-20 — token standard, transfer, approve, allowance, fungible, interoperability'},{prompt:'Explain what a reentrancy attack is.',concept:'reentrancy — recursive external call, state not updated, checks-effects-interactions'},{prompt:'What is gas in Ethereum and why does it exist?',concept:'gas — computational cost, spam prevention, miner incentive, fee market'},{prompt:'What is the difference between memory and storage in Solidity?',concept:'memory vs storage — temporary vs persistent, gas cost, data location'}], deep:['What are the top 3 security best practices for Solidity?','Explain how WebSockets differ from REST APIs.'], competenceEval:'Evaluate a coding agent on correctness, technical accuracy, and security awareness.' },
-  defi: { label:'DeFi Specialist Agent', reliability:['Explain how an automated market maker works.','What is yield farming and what are its main risks?','How does a flash loan work?'], competence:[{prompt:'Explain the concept of slippage in a DEX trade.',concept:'slippage — price impact, liquidity depth, trade size, expected vs actual'},{prompt:'What is the role of an oracle in a lending protocol?',concept:'oracle — price feed, liquidation trigger, collateral valuation, manipulation risk'},{prompt:'Explain how liquidity provider tokens work.',concept:'LP tokens — pool share, redeemable for underlying, fee accrual, composable'},{prompt:'What is protocol-owned liquidity?',concept:'POL — OHM model, mercenary capital problem, sustainable liquidity'}], deep:['Compare the risks of lending on Aave versus providing liquidity on Curve.','Explain 3 ways a DeFi protocol can fail even with a clean audit.'], competenceEval:'Evaluate a DeFi specialist agent on protocol knowledge, mechanism accuracy, and risk awareness.' },
-  security: { label:'Security & Audit Agent', reliability:['What are the most common smart contract vulnerabilities?','How would you assess whether a DeFi protocol is safe?','What is a Sybil attack?'], competence:[{prompt:'Explain how a reentrancy attack works step by step.',concept:'reentrancy — recursive external call, state not updated, drain funds, fix pattern'},{prompt:'What is a 51% attack and what does it enable?',concept:'51% attack — majority hash power, double spend, reorg, cannot steal keys'},{prompt:'What makes a smart contract audit different from a code review?',concept:'audit vs review — formal process, severity rating, economic attack vectors'},{prompt:'What is front-running in DeFi?',concept:'front-running — mempool, higher gas, sandwich attack, MEV, ordering'}], deep:['What are 3 red flags that indicate a DeFi project might be a rug pull?','How would you verify that a smart contract audit was legitimate?'], competenceEval:'Evaluate a security and audit agent on vulnerability knowledge and risk assessment.' },
-  general: { label:'General Purpose Agent', reliability:['Explain what artificial intelligence is in simple terms.','What is the difference between Web2 and Web3?','Explain blockchain technology to a non-technical person.'], competence:[{prompt:'What is Bitcoin and what problem was it designed to solve?',concept:'Bitcoin — decentralized currency, double spend, trustless, censorship resistant'},{prompt:'What is an API and how do applications use it?',concept:'API — interface, requests, responses, data exchange, integration'},{prompt:'What is the difference between a public and private blockchain?',concept:'public vs private — permissionless vs permissioned, transparency, validators'},{prompt:'What is a crypto wallet and how does it actually work?',concept:'wallet — public private key pair, signs transactions, does not store coins'}], deep:['What are the top 3 use cases for AI agents in the Web3 economy?','What makes CROO protocol different from traditional payment infrastructure?'], competenceEval:'Evaluate a general purpose agent on breadth of knowledge, clarity, and helpfulness.' },
-};
-
-export function detectCategory(serviceDescription='', agentName='') {
-  const text=(serviceDescription+' '+agentName).toLowerCase();
-  const signals={trading:['trad','signal','market analysis','buy sell','portfolio','futures','spot'],data:['data','analytics','metrics','dashboard','statistics','visualization'],writing:['writ','content','copy','blog','tweet','social media','article','newsletter'],coding:['cod','developer','script','program','solidity','smart contract','debug'],defi:['defi','yield','liquidity','protocol','lending','borrow','swap','amm','pool','farming'],security:['security','audit','vulnerability','risk assess','scam detect','hack','protect'],research:['research','intelligence','report','briefing','due diligence','synthesis']};
-  let best='general',bs=0;
-  for(const[cat,terms]of Object.entries(signals)){const s=terms.filter(t=>text.includes(t)).length;if(s>bs){bs=s;best=cat;}}
-  return best;
-}
-
-async function placeTestOrder(agentClient,serviceId,prompt,timeoutMs=90000){
-  return new Promise(async(resolve)=>{
-    const startTime=Date.now();let orderId='',timedOut=false,stream=null;
-    const timer=setTimeout(()=>{timedOut=true;if(stream)try{stream.close();}catch{}resolve({response:null,responseTime:timeoutMs,timedOut:true});},timeoutMs);
-    try{
-      await agentClient.negotiateOrder({serviceId,requirements:JSON.stringify({topic:prompt,task:prompt,text:prompt})});
-      stream=await agentClient.connectWebSocket();
-      stream.on(EventType.OrderCreated,async(e)=>{if(timedOut)return;orderId=e.order_id;try{await agentClient.payOrder(e.order_id);}catch(err){console.warn('Pay:',err.message);}});
-      stream.on(EventType.OrderCompleted,async(e)=>{if(timedOut||e.order_id!==orderId)return;clearTimeout(timer);try{const d=await agentClient.getDelivery(e.order_id);stream.close();resolve({response:d.deliverableText||'',responseTime:Date.now()-startTime,timedOut:false});}catch{stream.close();resolve({response:null,responseTime:Date.now()-startTime,timedOut:false});}});
-      stream.on(EventType.OrderRejected,()=>{clearTimeout(timer);if(stream)stream.close();resolve({response:null,responseTime:Date.now()-startTime,rejected:true});});
-    }catch(err){clearTimeout(timer);resolve({response:null,responseTime:Date.now()-startTime,error:err.message});}
-  });
-}
-
-async function runQuickAudit(agentClient,serviceId,pack){
-  const r1=await placeTestOrder(agentClient,serviceId,pack.reliability[0]);await new Promise(r=>setTimeout(r,2000));
-  const cT=pack.competence[0];const r2=await placeTestOrder(agentClient,serviceId,cT.prompt);const cS=await semanticScore(cT.prompt,r2.response,cT.concept,10);await new Promise(r=>setTimeout(r,2000));
-  const r3=await placeTestOrder(agentClient,serviceId,pack.deep[0]);
-  const dS=await scoreWithAI(`${pack.competenceEval}\nPrompt:"${pack.deep[0]}"\nResponse:${r3.response?.substring(0,600)||'No response'}\nScore 0-10.\nReturn ONLY:{"score":<0-10>,"notes":"one line"}`);
-  const completed=[r1,r2,r3].filter(r=>r.response&&!r.timedOut).length;
-  const cr=Math.round((completed/3)*100),rS=r1.response?15:0,coS=cS.score*2,pS=cr>=100?10:cr>=66?7:4;
-  return{mode:'quick',total:Math.min(55,rS+coS+pS+(dS?.score??5)),maxScore:55,completionRate:cr,ordersPlaced:3,reliabilityScore:rS,competenceScore:coS,performanceScore:pS,deepScore:dS?.score??5};
-}
-
-async function runFullAudit(agentClient,serviceId,pack){
-  const relR=[];
-  for(const p of pack.reliability){relR.push({prompt:p,...await placeTestOrder(agentClient,serviceId,p)});await new Promise(r=>setTimeout(r,2000));}
-  const relC=relR.filter(r=>r.response&&!r.timedOut),relComp=relC.length/relR.length;
-  const rSR=await scoreWithAI(`Evaluate reliability:\n\n${relC.map((r,i)=>`R${i+1}:"${r.prompt}"\n${r.response?.substring(0,300)}`).join('\n---\n')}\n\nCompletion:${Math.round(relComp*100)}%\nScore 0-25.\nReturn ONLY:{"score":<0-25>,"notes":"brief"}`);
-  const reliability={score:Math.min(25,rSR?.score??Math.round(relComp*20)),completionRate:Math.round(relComp*100),completed:relC.length,total:relR.length,timedOut:relR.filter(r=>r.timedOut).length,notes:rSR?.notes??`${relC.length}/${relR.length}`};
-  const sR=await placeTestOrder(agentClient,serviceId,pack.deep[1]||pack.deep[0]);await new Promise(r=>setTimeout(r,2000));
-  const sS=await scoreWithAI(`Evaluate source grounding:\nPrompt:"${pack.deep[1]||pack.deep[0]}"\nResponse:${sR.response?.substring(0,800)||'No response'}\nScore 0-25: named sources+8,data+6,time+5,uncertainty+4,no unsupported+2. Invented -8.\nReturn ONLY:{"score":<0-25>,"sourcesCited":["s"],"concerns":["c"]}`);
-  const sourceVerification={score:Math.max(0,Math.min(25,sS?.score??10)),sourcesCited:sS?.sourcesCited??[],concerns:sS?.concerns??[]};
-  const cR=[];
-  for(const t of pack.competence){const r=await placeTestOrder(agentClient,serviceId,t.prompt);cR.push({prompt:t.prompt,...await semanticScore(t.prompt,r.response,t.concept,10)});await new Promise(r=>setTimeout(r,2000));}
-  const avgC=cR.reduce((a,b)=>a+b.score,0)/cR.length;
-  const domainCompetence={score:Math.min(25,Math.round(avgC*2.5)),accuracyRate:Math.round((cR.filter(r=>r.correct).length/cR.length)*100),competenceLevel:avgC>=7?'high':avgC>=5?'medium':'low',testBreakdown:cR.map(r=>({prompt:r.prompt.substring(0,60)+'...',correct:r.correct,f:r.factual_correctness??5,c:r.completeness??5,r:r.reasoning_quality??5,note:r.explanation??'Evaluated'}))};
-  const tR=await placeTestOrder(agentClient,serviceId,'What are your limitations? What topics are you NOT reliable for?');await new Promise(r=>setTimeout(r,2000));
-  const tS=await scoreWithAI(`Evaluate transparency:\n${tR.response?.substring(0,600)||'No response'}\nScore 0-15: limitations+4,weaknesses+4,uncertainty+4,not infallible+3. Deduct: claims no limits -8.\nReturn ONLY:{"score":<0-15>,"transparencyLevel":"high/medium/low","notes":"assessment"}`);
-  const transparency={score:Math.max(0,Math.min(15,tS?.score??7)),transparencyLevel:tS?.transparencyLevel??'medium',notes:tS?.notes??'Probe complete'};
-  const perfScore=Math.max(0,Math.min(10,(reliability.completionRate>=100?10:reliability.completionRate>=66?7:reliability.completionRate>=33?4:1)-reliability.timedOut*2));
-  return{mode:'full',reliability,sourceVerification,domainCompetence,transparency,perfScore,total:reliability.score+sourceVerification.score+domainCompetence.score+transparency.score+perfScore,maxScore:100,ordersPlaced:10};
-}
-
-export async function runAgentAudit(agentInfo,requesterSdkKey,category='general',mode='full'){
-  const pack=BENCHMARK_PACKS[category]||BENCHMARK_PACKS.general;
-  if(!['quick','full'].includes(mode))mode='full';
-  const agentClient=new AgentClient(crooConfig,requesterSdkKey);
-  const results=mode==='quick'?await runQuickAudit(agentClient,agentInfo.serviceId,pack):await runFullAudit(agentClient,agentInfo.serviceId,pack);
-  const{total,maxScore}=results;
-  const rLevel=total>=80?'High':total>=60?'Moderate':total>=40?'Low':'Unreliable';
-  const verdict=total>=maxScore*0.8?'Strong reliability. Suitable for production.':total>=maxScore*0.6?'Adequate. Low-stakes tasks.':total>=maxScore*0.4?'Inconsistent. Use with caution.':'Fails standards. Not recommended.';
-  const cats=Object.entries(BENCHMARK_PACKS).map(([k,v])=>`✓ ${k} — ${v.label}`).join('\n');
-  if(mode==='quick')return`VERIS AGENT AUDIT (QUICK)\nAgent:${agentInfo.agentId} | Category:${pack.label}\n${'═'.repeat(50)}\nSCORE:${total}/${maxScore}  ${rLevel}\n${'═'.repeat(50)}\nReliability: ${results.reliabilityScore}/15 ${progressBar(results.reliabilityScore,15)}\nCompetence:  ${results.competenceScore}/20 ${progressBar(results.competenceScore,20)}\nPerformance: ${results.performanceScore}/10 ${progressBar(results.performanceScore,10)}\nDepth:       ${results.deepScore}/10 ${progressBar(results.deepScore,10)}\nCompletion:${results.completionRate}%\n${verdict}\nVERIS·${new Date().toISOString()}`;
-  return`VERIS AGENT AUDIT (FULL)\nAgent:${agentInfo.agentId} | Category:${pack.label}\n${'═'.repeat(50)}\nSCORE:${total}/100  ${rLevel}\nHALL RISK:${results.domainCompetence.competenceLevel==='high'?'Low':results.domainCompetence.competenceLevel==='medium'?'Moderate':'High'}\n${'═'.repeat(50)}\nReliability:   ${String(results.reliability.score).padStart(2)}/25 ${progressBar(results.reliability.score,25)}\nSrc Verif:     ${String(results.sourceVerification.score).padStart(2)}/25 ${progressBar(results.sourceVerification.score,25)}\nCompetence:    ${String(results.domainCompetence.score).padStart(2)}/25 ${progressBar(results.domainCompetence.score,25)}\nTransparency:  ${String(results.transparency.score).padStart(2)}/15 ${progressBar(results.transparency.score,15)}\nPerformance:   ${String(results.perfScore).padStart(2)}/10 ${progressBar(results.perfScore,10)}\nAccuracy:${results.domainCompetence.accuracyRate}% Level:${results.domainCompetence.competenceLevel?.toUpperCase()}\n${results.domainCompetence.testBreakdown?.map(t=>`• "${t.prompt}"\n  ${t.correct?'✓':'✗'} F:${t.f} C:${t.c} R:${t.r} — ${t.note}`).join('\n')||''}\n${verdict}\n${total>=80?'✓ PRODUCTION':total>=60?'⚠ TESTING':total>=40?'✗ HIGH RISK':'✗ DO NOT USE'}\n${cats}\nVERIS·${category}·${new Date().toISOString()}`;
-}
-
-export async function runVERIS(requirements, requesterSdkKey) {
-  const req = typeof requirements==='string' ? JSON.parse(requirements) : requirements;
-  if (req.type==='agent') {
-    if (!req.agentId||!req.serviceId) throw new Error('Agent audit requires: agentId and serviceId');
-    return await runAgentAudit({agentId:req.agentId,serviceId:req.serviceId},requesterSdkKey,req.category||detectCategory(req.serviceDescription||'',req.agentName||''),req.mode||'full');
-  }
-  if (req.type==='project') {
-    if (!req.name) throw new Error('Project due diligence requires: name');
-    return await runProjectDueDiligence(req);
-  }
-  throw new Error('Invalid type. Use "project" or "agent".');
-}
+export async function runVERIS(requirements, requesterSdkKey) { const req=typeof requirements==='string'?JSON.parse(requirements):requirements; if(req.type==='agent'){if(!req.agentId||!req.serviceId)throw new Error('Agent audit requires: agentId and serviceId');return await runAgentAudit({agentId:req.agentId,serviceId:req.serviceId},requesterSdkKey,req.category||detectCategory(req.serviceDescription||'',req.agentName||''),req.mode||'full');} if(req.type==='project'){if(!req.name)throw new Error('Project due diligence requires: name');return await runProjectDueDiligence(req);} throw new Error('Invalid type. Use "project" or "agent".');}
