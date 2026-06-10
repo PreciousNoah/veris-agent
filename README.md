@@ -17,9 +17,12 @@ reliability report on-chain.
 ## Quick Start
 
 \`\`\`bash
-git clone https://github.com/YOURUSERNAME/veris-agent
+git clone https://github.com/PreciousNoah/veris-agent
+
 cd veris-agent
+
 npm install
+
 cp .env.example .env
 # Fill in your keys
 node server.js
