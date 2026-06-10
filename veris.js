@@ -14,37 +14,94 @@ const crooConfig = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// ENTITY RESOLUTION  (#3)
-// Maps known project names / domain variants to canonical entity.
+// ENHANCED ENTITY RESOLUTION  (#3 improved)
+// Maps domains, names to canonical entities with entity type awareness.
 // Prevents auditing bitcoin.org (a website) instead of Bitcoin (a network).
 // ═══════════════════════════════════════════════════════════════════════
-const ENTITY_ALIASES = {
-  'bitcoin.org':          { canonical: 'Bitcoin',     type: 'l1l2' },
-  'bitcoincore.org':      { canonical: 'Bitcoin',     type: 'l1l2' },
-  'ethereum.org':         { canonical: 'Ethereum',    type: 'l1l2' },
-  'xrpl.org':             { canonical: 'XRPL',        type: 'infrastructure' },
-  'ripple.com':           { canonical: 'Ripple',      type: 'infrastructure' },
-  'hyperliquid.xyz':      { canonical: 'Hyperliquid', type: 'trading_protocol' },
-  'app.hyperliquid.xyz':  { canonical: 'Hyperliquid', type: 'trading_protocol' },
-  'uniswap.org':          { canonical: 'Uniswap',     type: 'defi' },
-  'aave.com':             { canonical: 'Aave',        type: 'defi' },
-  'solana.com':           { canonical: 'Solana',      type: 'l1l2' },
-  'chain.link':           { canonical: 'Chainlink',   type: 'tooling' },
+const ENHANCED_ENTITY_MAP = {
+  // Bitcoin ecosystem
+  'bitcoin.org':             { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
+  'bitcoincore.org':         { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
+  'bitcoin.com':             { canonical: 'Bitcoin',     type: 'l1l2', note: 'Not official domain' },
+  'github.com/bitcoin':      { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
+  'bitcoin':                 { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
+  'btc':                     { canonical: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
+  
+  // Ethereum ecosystem
+  'ethereum.org':            { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
+  'ethresear.ch':            { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
+  'github.com/ethereum':     { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
+  'ethereum':                { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
+  'eth':                     { canonical: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
+  
+  // Solana
+  'solana.com':              { canonical: 'Solana',      type: 'l1l2', network: 'Solana' },
+  'solana.org':              { canonical: 'Solana',      type: 'l1l2', network: 'Solana' },
+  'github.com/solana-labs':  { canonical: 'Solana',      type: 'l1l2', network: 'Solana' },
+  'solana':                  { canonical: 'Solana',      type: 'l1l2', network: 'Solana' },
+  
+  // DeFi protocols
+  'uniswap.org':             { canonical: 'Uniswap',     type: 'defi' },
+  'app.uniswap.org':         { canonical: 'Uniswap',     type: 'defi' },
+  'aave.com':                { canonical: 'Aave',        type: 'defi' },
+  'app.aave.com':            { canonical: 'Aave',        type: 'defi' },
+  
+  // Trading platforms
+  'hyperliquid.xyz':         { canonical: 'Hyperliquid', type: 'trading_protocol' },
+  'app.hyperliquid.xyz':     { canonical: 'Hyperliquid', type: 'trading_protocol' },
+  'hyperliquid':             { canonical: 'Hyperliquid', type: 'trading_protocol' },
+  
+  // Infrastructure
+  'chain.link':              { canonical: 'Chainlink',   type: 'tooling' },
+  'xrpl.org':                { canonical: 'XRPL',        type: 'infrastructure' },
+  'ripple.com':              { canonical: 'Ripple',      type: 'infrastructure' },
+  
+  // Exchanges
+  'coinbase.com':            { canonical: 'Coinbase',    type: 'exchange' },
+  'binance.com':             { canonical: 'Binance',     type: 'exchange' },
 };
 
+// Signals that require official (tier1) sources to count as confirmed
+const SIGNALS_REQUIRING_OFFICIAL = [
+  'whitepaper', 'technical_docs', 'roadmap', 'tokenomics',
+  'audit_found', 'open_source', 'active_github', 'team_page',
+  'founders_named', 'on_chain_governance', 'treasury_transparency',
+];
+
 export function resolveEntity(project) {
-  // If name is a URL or domain, resolve it
-  const input = (project.name || project.website || '').toLowerCase()
-    .replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim();
-  if (ENTITY_ALIASES[input]) {
-    const resolved = ENTITY_ALIASES[input];
+  const input = (project.name || project.website || '')
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/$/, '')
+    .trim();
+  
+  // Direct match
+  if (ENHANCED_ENTITY_MAP[input]) {
+    const resolved = ENHANCED_ENTITY_MAP[input];
     return {
       ...project,
       name: resolved.canonical,
       entityType: project.entityType || resolved.type,
+      network: resolved.network,
       resolvedFrom: input,
+      note: resolved.note,
     };
   }
+  
+  // Partial match
+  for (const [key, value] of Object.entries(ENHANCED_ENTITY_MAP)) {
+    if (input.includes(key) || key.includes(input)) {
+      return {
+        ...project,
+        name: value.canonical,
+        entityType: project.entityType || value.type,
+        network: value.network,
+        resolvedFrom: input,
+        note: value.note,
+      };
+    }
+  }
+  
   return project;
 }
 
@@ -99,25 +156,147 @@ function classifySourceTier(url = '', projectName = '') {
 const TIER_WEIGHTS = { tier1: 1.00, tier2: 0.75, tier3: 0.40, tier4: 0.15 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// SIGNAL REGISTRY  (#4 — one signal, one bucket, no double-counting)
-//
-// Every boolean signal belongs to exactly one dimension.
-// Legitimacy = Identity + Transparency + Verification + Reputation
-// Maturity   = Longevity + Ecosystem + Adoption + Development + Security + Market
+// CONFIDENCE GATING SYSTEM  (#1 — prevents weak evidence from scoring)
+// confidence < 60% → UNKNOWN (doesn't count)
+// 60-79% → WEAK (counts but flagged)
+// 80%+ → CONFIRMED (full weight)
 // ═══════════════════════════════════════════════════════════════════════
+function applyConfidenceGate(evidence) {
+  const gated = { ...evidence };
+  let downgradedCount = 0;
+  let flaggedCount = 0;
+  
+  for (const [key, value] of Object.entries(evidence)) {
+    if (value !== 'YES') continue;
+    if (key.endsWith('_urls') || key === 'confidence_per_signal' || 
+        key === 'evidence_citations' || key === 'contradictions' ||
+        key === 'founder_names' || key === 'audit_firm' || 
+        key === 'founded_year' || key === 'ecosystem_level' || 
+        key === 'adoption_level') continue;
+    
+    const confidence = evidence.confidence_per_signal?.[key];
+    
+    // No confidence estimate → treat as UNKNOWN
+    if (confidence === undefined || confidence === null) {
+      gated[key] = 'UNKNOWN';
+      if (gated[`${key}_urls`]) gated[`${key}_urls`] = [];
+      downgradedCount++;
+      continue;
+    }
+    
+    // Below 60% → UNKNOWN (too unreliable)
+    if (confidence < 60) {
+      gated[key] = 'UNKNOWN';
+      if (gated[`${key}_urls`]) gated[`${key}_urls`] = [];
+      downgradedCount++;
+      continue;
+    }
+    
+    // 60-79% → Keep as YES but flag as weak
+    if (confidence < 80) {
+      gated[`${key}_weak`] = true;
+      flaggedCount++;
+    }
+  }
+  
+  if (downgradedCount > 0 || flaggedCount > 0) {
+    console.log(`  🔍 Evidence quality: ${downgradedCount} signals downgraded (low confidence), ${flaggedCount} flagged as weak`);
+  }
+  
+  return gated;
+}
 
-// LEGITIMACY SIGNAL REGISTRY
-// Key: signal name. Value: { bucket, basePoints }
-// Each signal appears in exactly ONE bucket.
+// ═══════════════════════════════════════════════════════════════════════
+// SOURCE VALIDATION — Critical signals require official (tier1) sources
+// If only community/inferred sources exist → UNKNOWN
+// ═══════════════════════════════════════════════════════════════════════
+function validateSourceQuality(evidence, projectName) {
+  const validated = { ...evidence };
+  let invalidatedCount = 0;
+  
+  for (const signal of SIGNALS_REQUIRING_OFFICIAL) {
+    if (validated[signal] !== 'YES') continue;
+    
+    const urls = validated[`${signal}_urls`] || [];
+    
+    // Check if ANY URL is tier1 (official)
+    const hasOfficialSource = urls.some(url => 
+      classifySourceTier(url, projectName) === 'tier1'
+    );
+    
+    if (!hasOfficialSource) {
+      validated[signal] = 'UNKNOWN';
+      if (validated[`${signal}_urls`]) validated[`${signal}_urls`] = [];
+      invalidatedCount++;
+    }
+  }
+  
+  if (invalidatedCount > 0) {
+    console.log(`  🔍 Source validation: ${invalidatedCount} signals require official sources`);
+  }
+  
+  return validated;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// REASONABLENESS BENCHMARKS — Expected score ranges per entity
+// Prevents absurd outputs (Bitcoin = High Risk)
+// ═══════════════════════════════════════════════════════════════════════
+const ENTITY_BENCHMARKS = {
+  'Bitcoin':    { type: 'tier1_network', expectedLegitimacy: { min: 85, max: 100 }, expectedMaturity: { min: 85, max: 100 } },
+  'Ethereum':   { type: 'tier1_network', expectedLegitimacy: { min: 85, max: 100 }, expectedMaturity: { min: 85, max: 100 } },
+  'Solana':     { type: 'tier1_network', expectedLegitimacy: { min: 75, max: 95 },  expectedMaturity: { min: 70, max: 90 } },
+  'Uniswap':    { type: 'major_defi',    expectedLegitimacy: { min: 70, max: 90 },  expectedMaturity: { min: 65, max: 85 } },
+  'Aave':       { type: 'major_defi',    expectedLegitimacy: { min: 70, max: 90 },  expectedMaturity: { min: 65, max: 85 } },
+  'Chainlink':  { type: 'major_tooling', expectedLegitimacy: { min: 70, max: 90 },  expectedMaturity: { min: 65, max: 85 } },
+  'Hyperliquid': { type: 'growing_platform', expectedLegitimacy: { min: 60, max: 80 }, expectedMaturity: { min: 55, max: 75 } },
+  'FTX':        { type: 'known_failure', expectedLegitimacy: { min: 0, max: 30 }, expectedMaturity: { min: 0, max: 30 }, criticalExpected: true },
+  'Terra Luna': { type: 'known_failure', expectedLegitimacy: { min: 0, max: 30 }, expectedMaturity: { min: 0, max: 30 }, criticalExpected: true },
+  'Celsius':    { type: 'known_failure', expectedLegitimacy: { min: 0, max: 30 }, expectedMaturity: { min: 0, max: 30 }, criticalExpected: true },
+  'BitConnect': { type: 'known_scam', expectedLegitimacy: { min: 0, max: 20 }, expectedMaturity: { min: 0, max: 20 }, criticalExpected: true },
+};
+
+function validateReasonableness(projectName, legitimacyScore, maturityScore) {
+  const key = Object.keys(ENTITY_BENCHMARKS).find(k => 
+    projectName.toLowerCase().includes(k.toLowerCase())
+  );
+  
+  if (!key) return { reasonable: true, note: null, benchmark: 'unknown' };
+  
+  const benchmark = ENTITY_BENCHMARKS[key];
+  const issues = [];
+  
+  if (legitimacyScore < benchmark.expectedLegitimacy.min) {
+    issues.push(`Legitimacy ${legitimacyScore} below expected min ${benchmark.expectedLegitimacy.min}`);
+  }
+  if (legitimacyScore > benchmark.expectedLegitimacy.max + 5) {
+    issues.push(`Legitimacy ${legitimacyScore} above expected max ${benchmark.expectedLegitimacy.max}`);
+  }
+  if (maturityScore < benchmark.expectedMaturity.min) {
+    issues.push(`Maturity ${maturityScore} below expected min ${benchmark.expectedMaturity.min}`);
+  }
+  if (benchmark.criticalExpected && legitimacyScore > 30) {
+    issues.push(`CRITICAL: Expected critical risk but scored ${legitimacyScore}`);
+  }
+  
+  if (issues.length > 0) {
+    console.warn(`\n⚠ REASONABLENESS CHECK FAILED for ${projectName} (${benchmark.type}):`);
+    issues.forEach(i => console.warn(`  - ${i}`));
+    return { reasonable: false, issues, benchmark: benchmark.type };
+  }
+  
+  return { reasonable: true, benchmark: benchmark.type };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SIGNAL REGISTRY  (#4 — one signal, one bucket, no double-counting)
+// ═══════════════════════════════════════════════════════════════════════
 const LEGITIMACY_SIGNALS = {
-  // Identity — who/what is behind it?
-  // Note: for decentralized protocols, open_source IS identity evidence
   founders_named:         { bucket: 'identity',      basePoints: 14 },
   linkedin_found:         { bucket: 'identity',      basePoints:  8 },
   team_page:              { bucket: 'identity',      basePoints:  5 },
   verifiable_history:     { bucket: 'identity',      basePoints:  8 },
   genuine_engagement:     { bucket: 'identity',      basePoints:  4 },
-  // Transparency — what information is publicly available?
   whitepaper:             { bucket: 'transparency',  basePoints: 12 },
   technical_docs:         { bucket: 'transparency',  basePoints: 10 },
   roadmap:                { bucket: 'transparency',  basePoints:  7 },
@@ -125,7 +304,6 @@ const LEGITIMACY_SIGNALS = {
   clear_use_case:         { bucket: 'transparency',  basePoints:  6 },
   on_chain_governance:    { bucket: 'transparency',  basePoints:  5 },
   treasury_transparency:  { bucket: 'transparency',  basePoints:  5 },
-  // Verification — can claims be independently verified?
   active_github:          { bucket: 'verification',  basePoints: 12 },
   open_source:            { bucket: 'verification',  basePoints: 10 },
   audit_found:            { bucket: 'verification',  basePoints: 12 },
@@ -134,9 +312,8 @@ const LEGITIMACY_SIGNALS = {
   api_usage:              { bucket: 'verification',  basePoints:  6 },
   multisig_confirmed:     { bucket: 'verification',  basePoints:  6 },
   funding_confirmed:      { bucket: 'verification',  basePoints:  4 },
-  // Reputation — track record over time (no bonus system — direct dimension)
-  no_confirmed_fraud:     { bucket: 'reputation',    basePoints: 10 }, // derived
-  no_confirmed_hack:      { bucket: 'reputation',    basePoints:  6 }, // derived
+  no_confirmed_fraud:     { bucket: 'reputation',    basePoints: 10 },
+  no_confirmed_hack:      { bucket: 'reputation',    basePoints:  6 },
   longevity_10y:          { bucket: 'reputation',    basePoints: 14 },
   longevity_5y:           { bucket: 'reputation',    basePoints: 10 },
   longevity_2y:           { bucket: 'reputation',    basePoints:  5 },
@@ -144,54 +321,115 @@ const LEGITIMACY_SIGNALS = {
   media_coverage:         { bucket: 'reputation',    basePoints:  5 },
 };
 
-// MATURITY SIGNAL REGISTRY — metric-tier based
-const MATURITY_METRICS = {
-  longevity: {
-    tiers: [
-      { signal: 'longevity_10y', points: 60, label: 'Operating 10+ years' },
-      { signal: 'longevity_5y',  points: 40, label: 'Operating 5-9 years' },
-      { signal: 'longevity_2y',  points: 20, label: 'Operating 2-4 years' },
-      { signal: 'longevity_1y',  points: 10, label: 'Operating 1-2 years' },
-    ],
-    cap: 60, weight: 0.20,
-  },
-  ecosystem: {
-    // Driven by ecosystem_level string extracted from sources
-    cap: 60, weight: 0.20,
-  },
-  adoption: {
-    // Driven by adoption_level string extracted from sources
-    cap: 60, weight: 0.20,
-  },
-  development: {
-    signals: {
-      active_github: 15, multiple_contributors: 12, high_github_stars: 10,
-      regular_releases: 8, recent_commits: 8, developer_ecosystem: 10,
-      sdks_found: 7, grants_hackathons: 5, open_source: 5,
-    },
-    cap: 60, weight: 0.20,
-  },
-  security_track: {
-    signals: {
-      audit_found: 20, multiple_audits: 15, bug_bounty: 10, no_critical_hack: 15,
-    },
-    cap: 60, weight: 0.10,
-  },
-  market: {
-    signals: {
-      major_exchange_listed: 15, institutional_adoption: 15, top10_chain: 20,
-      tvl_mentioned: 12, trading_volume_mentioned: 10, large_community: 8,
-      media_coverage: 5,
-    },
-    cap: 60, weight: 0.10,
-  },
-};
+// ═══════════════════════════════════════════════════════════════════════
+// CLEAN MATURITY SCORING — Sub-scores instead of raw point sums
+// ═══════════════════════════════════════════════════════════════════════
+function computeCleanMaturityScore(evidence) {
+  const lFlags = longevityFlags(evidence);
+  const ev = { ...evidence, ...lFlags };
+  ev.no_critical_hack = (ev.confirmed_hack==='NO' || ev.confirmed_hack==='UNKNOWN') ? 'YES' : 'NO';
+  
+  const subScores = {
+    longevity: calculateLongevitySubscore(ev),
+    adoption: calculateAdoptionSubscore(ev),
+    ecosystem: calculateEcosystemSubscore(ev),
+    development: calculateDevelopmentSubscore(ev),
+    security: calculateSecuritySubscore(ev),
+    market: calculateMarketSubscore(ev),
+  };
+  
+  const weights = {
+    longevity: 0.25, adoption: 0.20, ecosystem: 0.20,
+    development: 0.15, security: 0.10, market: 0.10,
+  };
+  
+  const maturityScore = Math.round(
+    Object.entries(subScores).reduce((sum, [key, score]) => 
+      sum + (score * weights[key]), 0
+    )
+  );
+  
+  const applied = Object.entries(subScores).map(([key, score]) => ({
+    category: key.charAt(0).toUpperCase() + key.slice(1),
+    score,
+    label: getMaturityCategoryLabel(key, score),
+  }));
+  
+  return { maturityScore, subScores, applied };
+}
 
-// ═══════════════════════════════════════════════════════════════════════
-// ENTITY TEMPLATES  — per-type bucket weights only
-// No signal lists here — signals come from registry above.
-// Weight = how much each legitimacy bucket matters for this entity type.
-// ═══════════════════════════════════════════════════════════════════════
+function calculateLongevitySubscore(ev) {
+  if (ev.longevity_10y === 'YES') return 95;
+  if (ev.longevity_5y === 'YES') return 75;
+  if (ev.longevity_2y === 'YES') return 45;
+  if (ev.longevity_1y === 'YES') return 20;
+  return 5;
+}
+
+function calculateAdoptionSubscore(ev) {
+  const level = ev.adoption_level || 'none';
+  const baseMap = { global: 90, large: 70, medium: 45, small: 20, none: 5 };
+  let score = baseMap[level] || 5;
+  if (ev.major_exchange_listed === 'YES') score = Math.min(100, score + 10);
+  if (ev.institutional_adoption === 'YES') score = Math.min(100, score + 10);
+  if (ev.top10_chain === 'YES') score = Math.min(100, score + 15);
+  return score;
+}
+
+function calculateEcosystemSubscore(ev) {
+  const level = ev.ecosystem_level || 'none';
+  const baseMap = { dominant: 95, major: 75, growing: 50, small: 25, none: 5 };
+  let score = baseMap[level] || 5;
+  if (ev.developer_ecosystem === 'YES') score = Math.min(100, score + 15);
+  if (ev.sdks_found === 'YES') score = Math.min(100, score + 10);
+  if (ev.grants_hackathons === 'YES') score = Math.min(100, score + 10);
+  return score;
+}
+
+function calculateDevelopmentSubscore(ev) {
+  let score = 0;
+  if (ev.active_github === 'YES') score += 25;
+  if (ev.open_source === 'YES') score += 20;
+  if (ev.multiple_contributors === 'YES') score += 15;
+  if (ev.high_github_stars === 'YES') score += 10;
+  if (ev.regular_releases === 'YES') score += 15;
+  if (ev.recent_commits === 'YES') score += 10;
+  if (ev.developer_ecosystem === 'YES') score += 5;
+  return Math.min(100, score);
+}
+
+function calculateSecuritySubscore(ev) {
+  let score = 10;
+  if (ev.audit_found === 'YES') {
+    score += 35;
+    if (ev.multiple_audits === 'YES') score += 15;
+  }
+  if (ev.bug_bounty === 'YES') score += 20;
+  if (ev.no_critical_hack === 'YES') score += 20;
+  return Math.min(100, score);
+}
+
+function calculateMarketSubscore(ev) {
+  let score = 0;
+  if (ev.major_exchange_listed === 'YES') score += 25;
+  if (ev.institutional_adoption === 'YES') score += 25;
+  if (ev.tvl_mentioned === 'YES') score += 20;
+  if (ev.trading_volume_mentioned === 'YES') score += 15;
+  if (ev.large_community === 'YES') score += 10;
+  if (ev.media_coverage === 'YES') score += 5;
+  return Math.min(100, score);
+}
+
+function getMaturityCategoryLabel(category, score) {
+  if (score >= 90) return `${category}: Excellent`;
+  if (score >= 70) return `${category}: Strong`;
+  if (score >= 50) return `${category}: Moderate`;
+  if (score >= 30) return `${category}: Limited`;
+  return `${category}: Minimal`;
+}
+
+// [Keep all existing ENTITY_TEMPLATES, HARD_TRUST_EVENTS, and utility functions exactly as they are...]
+// [Keep existing ENTITY_TEMPLATES...]
 const ENTITY_TEMPLATES = {
   l1l2: {
     label: 'L1/L2 Blockchain',
@@ -261,20 +499,7 @@ const ENTITY_TEMPLATES = {
   },
 };
 
-export function detectEntityType(project) {
-  const text = [project.name,project.description,project.website,project.entityType]
-    .filter(Boolean).join(' ').toLowerCase();
-  const matches = Object.entries(ENTITY_TEMPLATES)
-    .filter(([k]) => k !== 'general')
-    .map(([type,cfg]) => ({ type, score: cfg.signals.filter(s => text.includes(s)).length }))
-    .filter(e => e.score > 0)
-    .sort((a,b) => b.score - a.score);
-  return matches[0]?.type || 'general';
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// HARD TRUST EVENTS
-// ═══════════════════════════════════════════════════════════════════════
+// [Keep existing HARD_TRUST_EVENTS...]
 const HARD_TRUST_EVENTS = [
   { key:'confirmed_rug_pull',   label:'Confirmed rug pull' },
   { key:'confirmed_fraud',      label:'Confirmed fraud' },
@@ -284,12 +509,7 @@ const HARD_TRUST_EVENTS = [
   { key:'criminal_conviction',  label:'Criminal conviction of founders' },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════
-// EVIDENCE EXTRACTION
-// YES / NO / UNKNOWN per signal + ecosystem_level + adoption_level +
-// contradictions + per-signal source URLs + confidence estimates.
-// Temperature 0.0.
-// ═══════════════════════════════════════════════════════════════════════
+// [Keep all existing extractEvidence, buildBaselineEvidence, longevityFlags, computeLegitimacyScore functions exactly as they are...]
 async function extractEvidence(combinedText, projectName, entityLabel) {
   const prompt =
     `You are a structured evidence extraction engine for "${projectName}" (${entityLabel}).\n\n` +
@@ -387,9 +607,6 @@ function buildBaselineEvidence() {
   return ev;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// LONGEVITY FLAGS
-// ═══════════════════════════════════════════════════════════════════════
 function longevityFlags(evidence) {
   const year = parseInt(evidence.founded_year);
   const now  = new Date().getFullYear();
@@ -405,24 +622,14 @@ function longevityFlags(evidence) {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// LEGITIMACY SCORING  (#4 no double-counting, #5 reputation as dimension)
-//
-// Four buckets: identity, transparency, verification, reputation.
-// Each bucket scores 0-100 independently.
-// Legitimacy = weighted average of four bucket scores.
-// Weights are entity-type specific.
-// ═══════════════════════════════════════════════════════════════════════
 function computeLegitimacyScore(evidence, template, projectName) {
   const lFlags  = longevityFlags(evidence);
   const ev      = { ...evidence, ...lFlags };
 
-  // Derived signals: no_confirmed_fraud, no_confirmed_hack
   ev.no_confirmed_fraud = (['confirmed_rug_pull','confirmed_fraud','confirmed_scam',
     'sec_enforcement','criminal_conviction'].every(k => ev[k]==='NO' || ev[k]==='UNKNOWN')) ? 'YES' : 'NO';
   ev.no_confirmed_hack  = (ev.confirmed_hack==='NO' || ev.confirmed_hack==='UNKNOWN') ? 'YES' : 'NO';
 
-  // Longevity is exclusive in reputation bucket — only highest fires
   const longevityOrder = ['longevity_10y','longevity_5y','longevity_2y','longevity_1y'];
   const firedLongevity  = longevityOrder.find(k => ev[k] === 'YES') || null;
 
@@ -432,10 +639,9 @@ function computeLegitimacyScore(evidence, template, projectName) {
   for (const [sigKey, sigCfg] of Object.entries(LEGITIMACY_SIGNALS)) {
     const { bucket, basePoints } = sigCfg;
 
-    // Longevity exclusivity in reputation bucket
     if (longevityOrder.includes(sigKey)) {
       if (sigKey !== firedLongevity) {
-        buckets[bucket].max += basePoints;  // still counts toward max
+        buckets[bucket].max += basePoints;
         continue;
       }
     }
@@ -457,16 +663,15 @@ function computeLegitimacyScore(evidence, template, projectName) {
       points: pts, tier,
       urls,
       confidence: ev.confidence_per_signal?.[sigKey] ?? defaultConfidence(tier),
+      weak: ev[`${sigKey}_weak`] || false,
     });
   }
 
-  // Normalize each bucket to 0-100
   const scores = {};
   for (const [bk, data] of Object.entries(buckets)) {
     scores[bk] = data.max > 0 ? Math.min(100, Math.round((data.raw / data.max) * 100)) : 0;
   }
 
-  // Weighted legitimacy
   const bw = template.bucketWeights;
   const legitimacyScore = Math.round(
     scores.identity     * bw.identity +
@@ -478,94 +683,11 @@ function computeLegitimacyScore(evidence, template, projectName) {
   return { legitimacyScore, scores, applied };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// MATURITY SCORING — metric tiers, not evidence count
-// ═══════════════════════════════════════════════════════════════════════
-function computeMaturityScore(evidence) {
-  const lFlags = longevityFlags(evidence);
-  const ev     = { ...evidence, ...lFlags };
-  ev.no_critical_hack = (ev.confirmed_hack==='NO' || ev.confirmed_hack==='UNKNOWN') ? 'YES' : 'NO';
-
-  const applied = [];
-  const axisScores = {};
-
-  for (const [axisKey, axis] of Object.entries(MATURITY_METRICS)) {
-    let axisScore = 0;
-    const axisApplied = [];
-
-    if (axisKey === 'longevity' && axis.tiers) {
-      for (const tier of axis.tiers) {
-        if ((ev[tier.signal] || 'UNKNOWN') === 'YES') {
-          const tierW = bestTierWeight(ev[`${tier.signal}_urls`] || []);
-          const pts   = Math.round(tier.points * tierW);
-          axisScore   = pts;
-          axisApplied.push({ label: tier.label, points: pts, tier: bestTierName(ev[`${tier.signal}_urls`]||[]) });
-          break;
-        }
-      }
-    } else if (axisKey === 'ecosystem') {
-      axisScore = ecosystemPoints(evidence.ecosystem_level);
-      if (axisScore > 0) axisApplied.push({ label:`Ecosystem: ${evidence.ecosystem_level}`, points:axisScore });
-    } else if (axisKey === 'adoption') {
-      axisScore = adoptionPoints(evidence.adoption_level);
-      if (axisScore > 0) axisApplied.push({ label:`Adoption: ${evidence.adoption_level}`, points:axisScore });
-    } else if (axis.signals) {
-      for (const [sigKey, basePts] of Object.entries(axis.signals)) {
-        const state = ev[sigKey] || 'UNKNOWN';
-        if (state !== 'YES') continue;
-        const urls  = ev[`${sigKey}_urls`] || [];
-        const tierW = bestTierWeight(urls);
-        const pts   = Math.round(basePts * tierW);
-        axisScore  += pts;
-        axisApplied.push({ label: SIGNAL_LABELS[sigKey]||sigKey, points:pts, tier:bestTierName(urls) });
-      }
-    }
-
-    axisScore = Math.min(axis.cap, axisScore);
-    axisScores[axisKey] = { score: axisScore, cap: axis.cap, weight: axis.weight };
-    applied.push(...axisApplied);
-  }
-
-  let weightedSum = 0, totalWeight = 0;
-  for (const ax of Object.values(axisScores)) {
-    weightedSum += (ax.score / ax.cap) * ax.weight;
-    totalWeight += ax.weight;
-  }
-  const maturityScore = totalWeight > 0 ? Math.min(100, Math.round((weightedSum/totalWeight)*100)) : 0;
-  return { maturityScore, applied, axisScores };
-}
-
-function ecosystemPoints(level) {
-  return { dominant:60, major:40, growing:25, small:10, none:0 }[level] ?? 0;
-}
-function adoptionPoints(level) {
-  return { global:60, large:40, medium:25, small:10, none:0 }[level] ?? 0;
-}
-function bestTierWeight(urls = [], projectName = '') {
-  if (!urls.length) return TIER_WEIGHTS.tier4;
-  const best = ['tier1','tier2','tier3','tier4'].find(t => urls.map(u=>classifySourceTier(u,projectName||'')).includes(t)) || 'tier4';
-  return TIER_WEIGHTS[best];
-}
-function bestTierName(urls = [], projectName = '') {
-  if (!urls.length) return 'tier4';
-  return ['tier1','tier2','tier3','tier4'].find(t => urls.map(u=>classifySourceTier(u,projectName||'')).includes(t)) || 'tier4';
-}
-function defaultConfidence(tier) {
-  return { tier1:90, tier2:70, tier3:45, tier4:20 }[tier] ?? 20;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// CONFIDENCE ENGINE  (#1 — authority + count + agreement + freshness)
-// Confidence is about HOW WELL we know, not about WHAT we know.
-// Bitcoin should get 90%+ because of massive tier1/tier2 source coverage.
-// A meme coin with no official sources should get ~30-50%.
-// ═══════════════════════════════════════════════════════════════════════
+// [Keep existing utility functions: computeConfidence, getRecommendation, checkHardEvents, etc...]
 function computeConfidence(evidence, allSources) {
-  // 1. Source authority: weighted average of tier weights across ALL sources
   const authority = allSources.length === 0 ? 0.05
     : allSources.reduce((sum, s) => sum + (TIER_WEIGHTS[classifySourceTier(s.url||'')] || 0.15), 0) / allSources.length;
 
-  // 2. Source count: more sources = higher confidence, diminishing returns
   const countScore = allSources.length === 0 ? 0.05
     : allSources.length >= 20 ? 1.00
     : allSources.length >= 10 ? 0.90
@@ -573,22 +695,18 @@ function computeConfidence(evidence, allSources) {
     : allSources.length >= 2  ? 0.55
     : 0.35;
 
-  // 3. Cross-source agreement: multiple sources confirming same signals
   const citations    = evidence.evidence_citations || [];
   const claimCounts  = citations.reduce((acc,c) => { acc[c.claim]=(acc[c.claim]||0)+1; return acc; }, {});
   const multiCited   = Object.values(claimCounts).filter(v => v >= 2).length;
   const totalClaims  = Object.keys(claimCounts).length;
   const agreement    = totalClaims === 0 ? 0.50 : Math.min(1, 0.50 + (multiCited / totalClaims) * 0.50);
 
-  // 4. Freshness: recent activity signals
   const freshness = (evidence.recent_commits==='YES' || evidence.regular_releases==='YES') ? 0.95
     : (evidence.active_github==='YES' || evidence.active_community==='YES') ? 0.80
     : 0.60;
 
-  // 5. Contradiction penalty
   const contraFactor = Math.max(0.60, 1 - (evidence.contradictions?.length||0) * 0.08);
 
-  // Weighted combination
   const raw = (
     authority  * 0.30 +
     countScore * 0.25 +
@@ -599,18 +717,12 @@ function computeConfidence(evidence, allSources) {
   return Math.min(0.98, Math.max(0.05, raw));
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// RECOMMENDATION ENGINE  (#8 — fully deterministic rules)
-// Groq does NOT set the label. Code does.
-// ═══════════════════════════════════════════════════════════════════════
 function getRecommendation(legitimacyScore, maturityScore, opRiskLevel, hardEventsConfirmed) {
-  // Hard events override everything
   if (hardEventsConfirmed.length > 0) {
     return { label:'CRITICAL RISK', symbol:'⛔', band:'0-29',
       text:'Hard trust event confirmed (fraud/scam/sanctions). Do not engage.' };
   }
 
-  // Rule-based derivation from two scores
   if (legitimacyScore >= 85 && maturityScore >= 70) {
     return { label:'STRONGLY TRUSTED', symbol:'✓✓', band:'90-100',
       text:'Strong legitimacy and maturity signals across multiple independent sources.' };
@@ -635,9 +747,6 @@ function getRecommendation(legitimacyScore, maturityScore, opRiskLevel, hardEven
     text:'Critical legitimacy failures or confirmed negative events. VERIS advises against engagement.' };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// HARD EVENT / OPERATIONAL RISK
-// ═══════════════════════════════════════════════════════════════════════
 function validateHardEvent(key, evidence) {
   if (evidence[key] !== 'YES') return false;
   const cit = (evidence.evidence_citations||[]).find(c => c.claim===key);
@@ -671,9 +780,6 @@ function checkOperationalRisk(evidence) {
   return { confirmed, unverified, level: confirmed.length===0?'Low':confirmed.length===1?'Medium':'High' };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// SOURCE AUTHORITY BREAKDOWN  (#6)
-// ═══════════════════════════════════════════════════════════════════════
 function sourceAuthorityBreakdown(allSources, projectName) {
   const counts = { tier1:0, tier2:0, tier3:0, tier4:0 };
   for (const s of allSources) {
@@ -701,9 +807,6 @@ const SIGNAL_LABELS = {
   active_community:'Active community', active_proposals:'Active governance proposals',
 };
 
-// ═══════════════════════════════════════════════════════════════════════
-// UTILITIES
-// ═══════════════════════════════════════════════════════════════════════
 async function collectEvidence(query, projectName='') {
   try {
     const res = await tavilyClient.search(query, { searchDepth:'advanced', maxResults:5, includeAnswer:false });
@@ -795,13 +898,29 @@ function tierTag(t) {
   return { tier1:'[T1]', tier2:'[T2]', tier3:'[T3]', tier4:'[T4]' }[t]||'[T?]';
 }
 
+function bestTierWeight(urls = [], projectName = '') {
+  if (!urls.length) return TIER_WEIGHTS.tier4;
+  const best = ['tier1','tier2','tier3','tier4'].find(t => urls.map(u=>classifySourceTier(u,projectName||'')).includes(t)) || 'tier4';
+  return TIER_WEIGHTS[best];
+}
+
+function bestTierName(urls = [], projectName = '') {
+  if (!urls.length) return 'tier4';
+  return ['tier1','tier2','tier3','tier4'].find(t => urls.map(u=>classifySourceTier(u,projectName||'')).includes(t)) || 'tier4';
+}
+
+function defaultConfidence(tier) {
+  return { tier1:90, tier2:70, tier3:45, tier4:20 }[tier] ?? 20;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
-// PROJECT DUE DILIGENCE — MAIN PIPELINE
+// UPDATED PROJECT DUE DILIGENCE — MAIN PIPELINE with quality gates
 // ═══════════════════════════════════════════════════════════════════════
 export async function runProjectDueDiligence(project) {
-  // Entity resolution first (#3)
+  // Enhanced entity resolution
   project = resolveEntity(project);
   console.log(`\n🔍 VERIS Due Diligence: ${project.name}${project.resolvedFrom ? ` (resolved from ${project.resolvedFrom})` : ''}`);
+  if (project.note) console.log(`  ⚠ Note: ${project.note}`);
 
   const entityKey = project.entityType || detectEntityType(project);
   const template  = ENTITY_TEMPLATES[entityKey] || ENTITY_TEMPLATES.general;
@@ -819,7 +938,12 @@ export async function runProjectDueDiligence(project) {
 
   // Extract
   console.log('  → Extracting evidence...');
-  const evidence = await extractEvidence(combinedText, project.name, template.label);
+  const rawEvidence = await extractEvidence(combinedText, project.name, template.label);
+
+  // APPLY QUALITY GATES (NEW!)
+  console.log('  → Validating evidence quality...');
+  let evidence = applyConfidenceGate(rawEvidence);        // Fix #1: Confidence gating
+  evidence = validateSourceQuality(evidence, project.name); // Fix #2: Source validation
 
   // Hard events
   const { confirmed: hardEvents, unverified: unverifiedHard } = checkHardEvents(evidence);
@@ -827,7 +951,7 @@ export async function runProjectDueDiligence(project) {
   // Score
   console.log('  → Scoring...');
   const legit   = computeLegitimacyScore(evidence, template, project.name);
-  const mat     = computeMaturityScore(evidence);
+  const mat     = computeCleanMaturityScore(evidence);  // Fix #5: Clean maturity
   const opRisk  = checkOperationalRisk(evidence);
 
   const legitimacyScore = hardEvents.length > 0 ? 0 : legit.legitimacyScore;
@@ -836,16 +960,19 @@ export async function runProjectDueDiligence(project) {
   // Confidence
   const confidence = computeConfidence(evidence, allSources);
 
-  // Recommendation (deterministic rules)
+  // Recommendation
   const rec = getRecommendation(legitimacyScore, maturityScore, opRisk.level, hardEvents);
+
+  // REASONABLENESS CHECK (NEW!)
+  const reasonableness = validateReasonableness(project.name, legitimacyScore, maturityScore);
 
   // Calibration
   const calibration = checkCalibration(project.name, legitimacyScore, maturityScore);
 
-  // Source authority breakdown (#6)
+  // Source authority breakdown
   const srcBreakdown = sourceAuthorityBreakdown(allSources, project.name);
 
-  // Verdict text — Groq writes a factual paragraph from confirmed signals only
+  // Verdict text
   console.log('  → Generating verdict...');
   const allConfirmedSignals = [
     ...legit.applied.identity, ...legit.applied.transparency,
@@ -861,7 +988,7 @@ export async function runProjectDueDiligence(project) {
     'Write a factual trust audit verdict. Do not add information not listed above. Be direct.'
   );
 
-  // ─── Format report ───
+  // Format report
   const hardWarn = hardEvents.length > 0
     ? `\n⛔ HARD TRUST EVENT — All scores overridden to 0\n` +
       hardEvents.map(e=>`   ${e.label}\n   Source: ${e.citation.source_url}\n   Quote:  "${e.citation.quote}"`).join('\n')
@@ -872,16 +999,18 @@ export async function runProjectDueDiligence(project) {
     ? `\n~  MODERATE CONFIDENCE (${Math.round(confidence*100)}%): Some areas have limited coverage.`
     : '';
   const anomalyWarn = calibration.anomaly ? `\n⚠  SCORE ANOMALY: ${calibration.note}` : '';
+  const reasonablenessWarn = !reasonableness.reasonable 
+    ? `\n⚠  REASONABLENESS CHECK FAILED (${reasonableness.benchmark})\n${reasonableness.issues.map(i => `   ${i}`).join('\n')}`
+    : '';
 
   function sigBlock(signals) {
     if (!signals.length) return '  (No signals confirmed)';
     return signals.map(s =>
-      `  +${String(s.points).padStart(2)}  ${s.label}  ${tierTag(s.tier)} conf:${s.confidence}%` +
+      `  +${String(s.points).padStart(2)}  ${s.label}  ${tierTag(s.tier)} conf:${s.confidence}%${s.weak ? ' ⚠ WEAK' : ''}` +
       (s.urls?.[0] ? `\n       └─ ${s.urls[0]}` : '')
     ).join('\n');
   }
 
-  // Contradiction block (#7)
   const contraBlock = evidence.contradictions?.length > 0
     ? `\n⚡ CONFLICTS DETECTED — Manual verification recommended\n` +
       evidence.contradictions.map(c =>
@@ -889,7 +1018,6 @@ export async function runProjectDueDiligence(project) {
       ).join('\n\n')
     : '';
 
-  // Evidence missing section
   const allTemplateSignals = [...new Set([
     ...Object.keys(LEGITIMACY_SIGNALS).filter(k =>
       !['no_confirmed_fraud','no_confirmed_hack','longevity_10y','longevity_5y','longevity_2y','longevity_1y'].includes(k)
@@ -933,13 +1061,11 @@ LEGITIMACY:   ${legitimacyScore}/100  ${progressBar(legitimacyScore)}
   Reputation:     ${legit.scores.reputation}/100
 
 MATURITY:     ${maturityScore}/100  ${progressBar(maturityScore)}
-  Longevity:      ${evidence.founded_year ? `Founded ${evidence.founded_year}` : 'Unknown'}
-  Ecosystem:      ${evidence.ecosystem_level || 'Unknown'}
-  Adoption:       ${evidence.adoption_level  || 'Unknown'}
+${mat.subScores ? Object.entries(mat.subScores).map(([key, score]) => `  ${key.charAt(0).toUpperCase() + key.slice(1)}: ${score}/100 ${progressBar(score)}`).join('\n') : `  Longevity:      ${evidence.founded_year ? `Founded ${evidence.founded_year}` : 'Unknown'}\n  Ecosystem:      ${evidence.ecosystem_level || 'Unknown'}\n  Adoption:       ${evidence.adoption_level  || 'Unknown'}`}
 
 CONFIDENCE:   ${confBar(confidence, 20)}
 OP. RISK:     ${opRisk.level}
-${hardWarn}${lowConfWarn}${anomalyWarn}
+${hardWarn}${lowConfWarn}${anomalyWarn}${reasonablenessWarn}
 RECOMMENDATION:  ${rec.symbol} ${rec.label}  [Band: ${rec.band}]
 ${rec.text}
 ══════════════════════════════════════════════
@@ -963,7 +1089,7 @@ REPUTATION SIGNALS
 ${sigBlock(legit.applied.reputation)}
 
 MATURITY SIGNALS
-${mat.applied.length ? mat.applied.map(s=>`  +${String(s.points).padStart(2)}  ${s.label}${s.tier?`  ${tierTag(s.tier)}`:'  [derived]'}`).join('\n') : '  (No signals confirmed)'}
+${mat.applied.length ? mat.applied.map(s=>`  +${String(s.score).padStart(2)}  ${s.label}`).join('\n') : '  (No signals confirmed)'}
 
 ${missingBlock}
 ══════════════════════════════════════════════
@@ -984,9 +1110,10 @@ SCORE BANDS
 METHODOLOGY
   Entity:       ${template.label} (Weights: Identity×${template.bucketWeights.identity} · Transparency×${template.bucketWeights.transparency} · Verification×${template.bucketWeights.verification} · Reputation×${template.bucketWeights.reputation})
   Legitimacy:   Weighted average of 4 buckets — no double-counting (each signal appears once)
-  Maturity:     Metric tiers (Longevity/Ecosystem/Adoption/Dev/Security/Market) — not evidence count
+  Maturity:     Clean sub-scores (Longevity/Adoption/Ecosystem/Development/Security/Market)
   Confidence:   Source authority (30%) + count (25%) + agreement (25%) + freshness (20%)
   Tiers:        T1 Official/GitHub (×1.00) · T2 Media/Audit (×0.75) · T3 Community (×0.40) · T4 Inferred (×0.15)
+  Quality Gates: Confidence <60% → UNKNOWN | Critical signals require T1 sources
   Hard events:  Confirmed fraud/sanctions → override to 0
   Operational:  Hacks on separate axis — never reduce trust scores
 
@@ -998,9 +1125,18 @@ AUDIT TRAIL
   Timestamp:   ${new Date().toISOString()}`;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// BENCHMARK SUITE
-// ═══════════════════════════════════════════════════════════════════════
+// [Keep all remaining code: detectEntityType, CALIBRATION_BENCHMARKS, checkCalibration, runBenchmarkSuite, BENCHMARK_PACKS, detectCategory, placeTestOrder, runQuickAudit, runFullAudit, runAgentAudit, runVERIS - ALL UNCHANGED]
+export function detectEntityType(project) {
+  const text = [project.name,project.description,project.website,project.entityType]
+    .filter(Boolean).join(' ').toLowerCase();
+  const matches = Object.entries(ENTITY_TEMPLATES)
+    .filter(([k]) => k !== 'general')
+    .map(([type,cfg]) => ({ type, score: cfg.signals.filter(s => text.includes(s)).length }))
+    .filter(e => e.score > 0)
+    .sort((a,b) => b.score - a.score);
+  return matches[0]?.type || 'general';
+}
+
 export const CALIBRATION_BENCHMARKS = {
   bitcoin:      { legitMin:82, maturityMin:82 },
   ethereum:     { legitMin:82, maturityMin:82 },
@@ -1027,16 +1163,13 @@ export function checkCalibration(name, legit, maturity) {
 
 export async function runBenchmarkSuite(verbose=false) {
   const SUITE = [
-    // Gold standard
     { name:'Bitcoin',     entityType:'l1l2',             group:'gold',   legitMin:82, maturityMin:82 },
     { name:'Ethereum',    entityType:'l1l2',             group:'gold',   legitMin:82, maturityMin:82 },
     { name:'Solana',      entityType:'l1l2',             group:'gold',   legitMin:75, maturityMin:72 },
-    // Good projects
     { name:'Hyperliquid', entityType:'trading_protocol', group:'good',   legitMin:65, maturityMin:58 },
     { name:'Uniswap',     entityType:'defi',             group:'good',   legitMin:72, maturityMin:68 },
     { name:'Aave',        entityType:'defi',             group:'good',   legitMin:72, maturityMin:65 },
     { name:'XRPL',        entityType:'infrastructure',   group:'good',   legitMin:72, maturityMin:65 },
-    // Known failures
     { name:'FTX',         entityType:'trading_protocol', group:'failed', expectCritical:true },
     { name:'Terra Luna',  entityType:'l1l2',             group:'failed', expectCritical:true },
     { name:'Celsius',     entityType:'defi',             group:'failed', expectCritical:true },
@@ -1073,7 +1206,6 @@ export async function runBenchmarkSuite(verbose=false) {
   console.log('═'.repeat(72));
   console.log(`RESULT: ${passed}/${results.length} passed`);
 
-  // Ordering invariants
   const btc = results.find(r=>r.name==='Bitcoin');
   const hyp = results.find(r=>r.name==='Hyperliquid');
   if (btc&&hyp) {
@@ -1086,9 +1218,7 @@ export async function runBenchmarkSuite(verbose=false) {
   return results;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// AGENT BENCHMARK PACKS + AUDIT (unchanged)
-// ═══════════════════════════════════════════════════════════════════════
+// [Keep BENCHMARK_PACKS, detectCategory, placeTestOrder, runQuickAudit, runFullAudit, runAgentAudit, runVERIS unchanged]
 const BENCHMARK_PACKS = {
   research: { label:'Research Agent', reliability:['Explain how Aave liquidation works in simple terms.','Explain impermanent loss and when it occurs.','What problem does a liquidity pool solve?'], competence:[{prompt:'Explain the health factor concept in DeFi lending.',concept:'health factor — collateral ratio, liquidation threshold, risk management'},{prompt:'How does an automated market maker price assets?',concept:'AMM pricing — constant product formula, liquidity, slippage'},{prompt:'What is the difference between APR and APY in DeFi?',concept:'APR vs APY — compounding, frequency, yield calculation'},{prompt:'Why do DeFi protocols need oracles?',concept:'oracles — external price data, on-chain verification, manipulation risk'}], deep:['Compare the risk profiles of lending on Aave versus providing liquidity on Uniswap.','What are 3 key risks a user should evaluate before using a newly launched DeFi protocol?'], competenceEval:'Evaluate a DeFi research agent on factual accuracy, depth, and source grounding.' },
   trading: { label:'Trading Agent', reliability:['Explain what a stop loss is and why traders use it.','What does it mean when a market is in backwardation?','Explain the concept of position sizing in trading.'], competence:[{prompt:'How does funding rate work in perpetual futures?',concept:'funding rate — longs pay shorts or vice versa, market balance, 8-hour intervals'},{prompt:'What does the RSI indicator measure?',concept:'RSI — momentum oscillator, overbought >70, oversold <30, divergence'},{prompt:'Explain the difference between a limit order and a market order.',concept:'limit vs market — price control, execution certainty, slippage'},{prompt:'What is the purpose of a liquidation price in leveraged trading?',concept:'liquidation — leverage, margin, forced close, collateral loss'}], deep:['What are 3 warning signs that a crypto rally is losing momentum?','Explain how you would assess risk before entering a leveraged trade.'], competenceEval:'Evaluate a trading agent on concept accuracy, risk awareness, and reasoning.' },
