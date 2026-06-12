@@ -1484,642 +1484,482 @@ export async function runBenchmarkSuite(verbose=false) {
 // AGENT BENCHMARK PACKS + AUDIT
 // ═══════════════════════════════════════════════════════════════════════
 
-const BENCHMARK_PACKS = {
-  research: {
-    label: 'Research Agent',
-    reliability: [
-      'Explain how Aave liquidation works in simple terms.',
-      'Explain impermanent loss and when it occurs.',
-      'What problem does a liquidity pool solve?'
-    ],
-    competence: [
-      { prompt: 'Explain the health factor concept in DeFi lending.', concept: 'health factor — collateral ratio, liquidation threshold, risk management' },
-      { prompt: 'How does an automated market maker price assets?', concept: 'AMM pricing — constant product formula, liquidity, slippage' },
-      { prompt: 'What is the difference between APR and APY in DeFi?', concept: 'APR vs APY — compounding, frequency, yield calculation' },
-      { prompt: 'Why do DeFi protocols need oracles?', concept: 'oracles — external price data, on-chain verification, manipulation risk' },
-    ],
-    deep: [
-      'Compare the risk profiles of lending on Aave versus providing liquidity on Uniswap.',
-      'What are 3 key risks a user should evaluate before using a newly launched DeFi protocol?'
-    ],
-    competenceEval: 'Evaluate a DeFi research agent on factual accuracy, depth, and source grounding.',
-  },
-  trading: {
-    label: 'Trading Agent',
-    reliability: [
-      'Explain what a stop loss is and why traders use it.',
-      'What does it mean when a market is in backwardation?',
-      'Explain the concept of position sizing in trading.'
-    ],
-    competence: [
-      { prompt: 'How does funding rate work in perpetual futures?', concept: 'funding rate — longs pay shorts or vice versa, market balance, 8-hour intervals' },
-      { prompt: 'What does the RSI indicator measure?', concept: 'RSI — momentum oscillator, overbought >70, oversold <30, divergence' },
-      { prompt: 'Explain the difference between a limit order and a market order.', concept: 'limit vs market — price control, execution certainty, slippage' },
-      { prompt: 'What is the purpose of a liquidation price in leveraged trading?', concept: 'liquidation — leverage, margin, forced close, collateral loss' },
-    ],
-    deep: [
-      'What are 3 warning signs that a crypto rally is losing momentum?',
-      'Explain how you would assess risk before entering a leveraged trade.'
-    ],
-    competenceEval: 'Evaluate a trading agent on concept accuracy, risk awareness, and reasoning.',
-  },
-  data: {
-    label: 'Data & Analytics Agent',
-    reliability: [
-      'Explain the difference between on-chain and off-chain data.',
-      'What does TVL measure and why does it matter in DeFi?',
-      'Explain what a moving average tells you about price trend.'
-    ],
-    competence: [
-      { prompt: 'What is the difference between correlation and causation?', concept: 'correlation vs causation — statistical relationship, not causal, confounding' },
-      { prompt: 'How would you detect wash trading in on-chain data?', concept: 'wash trading — circular transactions, artificial volume, same wallet patterns' },
-      { prompt: 'What metrics would you track to monitor the health of a DeFi lending protocol?', concept: 'lending health — utilization rate, bad debt, liquidations, TVL, collateral ratio' },
-      { prompt: 'Explain what standard deviation measures.', concept: 'standard deviation — spread from mean, volatility, risk quantification' },
-    ],
-    deep: [
-      'What on-chain metrics best predict whether a DeFi protocol is growing or declining?',
-      'How would you build a simple risk dashboard for a DeFi portfolio?'
-    ],
-    competenceEval: 'Evaluate a data analytics agent on statistical accuracy and data interpretation.',
-  },
-  writing: {
-    label: 'Writing & Content Agent',
-    reliability: [
-      'Write a 50-word tweet announcing a new DeFi protocol launch.',
-      'Summarize blockchain technology in 3 sentences for a beginner.',
-      'Write a one-paragraph introduction to a crypto market report.'
-    ],
-    competence: [
-      { prompt: 'Explain the difference between active and passive voice.', concept: 'active vs passive — subject acts vs receives action, clarity' },
-      { prompt: 'What makes a strong call-to-action in marketing copy?', concept: 'CTA — clarity, urgency, benefit, direct instruction, action verb' },
-      { prompt: 'What is the inverted pyramid style in journalism?', concept: 'inverted pyramid — most important first, supporting details, background' },
-      { prompt: 'What is the difference between tone and voice in writing?', concept: 'tone vs voice — tone per context, voice is consistent identity' },
-    ],
-    deep: [
-      'Write a 3-tweet thread explaining why AI agents are the future of commerce.',
-      'Draft a 100-word product description for an AI agent that audits Web3 projects.'
-    ],
-    competenceEval: 'Evaluate a writing agent on clarity, grammar, tone, and format adherence.',
-  },
-  coding: {
-    label: 'Coding & Developer Agent',
-    reliability: [
-      'Write a JavaScript function that calculates compound interest.',
-      'Explain what a smart contract is.',
-      'What is the difference between async/await and callbacks?'
-    ],
-    competence: [
-      { prompt: 'What does the ERC-20 standard define?', concept: 'ERC-20 — token standard, transfer, approve, allowance, fungible, interoperability' },
-      { prompt: 'Explain what a reentrancy attack is.', concept: 'reentrancy — recursive external call, state not updated, checks-effects-interactions' },
-      { prompt: 'What is gas in Ethereum and why does it exist?', concept: 'gas — computational cost, spam prevention, miner incentive, fee market' },
-      { prompt: 'What is the difference between memory and storage in Solidity?', concept: 'memory vs storage — temporary vs persistent, gas cost, data location' },
-    ],
-    deep: [
-      'What are the top 3 security best practices for Solidity?',
-      'Explain how WebSockets differ from REST APIs.'
-    ],
-    competenceEval: 'Evaluate a coding agent on correctness, technical accuracy, and security awareness.',
-  },
-  defi: {
-    label: 'DeFi Specialist Agent',
-    reliability: [
-      'Explain how an automated market maker works.',
-      'What is yield farming and what are its main risks?',
-      'How does a flash loan work?'
-    ],
-    competence: [
-      { prompt: 'Explain the concept of slippage in a DEX trade.', concept: 'slippage — price impact, liquidity depth, trade size, expected vs actual' },
-      { prompt: 'What is the role of an oracle in a lending protocol?', concept: 'oracle — price feed, liquidation trigger, collateral valuation, manipulation risk' },
-      { prompt: 'Explain how liquidity provider tokens work.', concept: 'LP tokens — pool share, redeemable for underlying, fee accrual, composable' },
-      { prompt: 'What is protocol-owned liquidity?', concept: 'POL — OHM model, mercenary capital problem, sustainable liquidity' },
-    ],
-    deep: [
-      'Compare the risks of lending on Aave versus providing liquidity on Curve.',
-      'Explain 3 ways a DeFi protocol can fail even with a clean audit.'
-    ],
-    competenceEval: 'Evaluate a DeFi specialist agent on protocol knowledge, mechanism accuracy, and risk awareness.',
-  },
-  security: {
-    label: 'Security & Audit Agent',
-    reliability: [
-      'What are the most common smart contract vulnerabilities?',
-      'How would you assess whether a DeFi protocol is safe?',
-      'What is a Sybil attack?'
-    ],
-    competence: [
-      { prompt: 'Explain how a reentrancy attack works step by step.', concept: 'reentrancy — recursive external call, state not updated, drain funds, fix pattern' },
-      { prompt: 'What is a 51% attack and what does it enable?', concept: '51% attack — majority hash power, double spend, reorg, cannot steal keys' },
-      { prompt: 'What makes a smart contract audit different from a code review?', concept: 'audit vs review — formal process, severity rating, economic attack vectors' },
-      { prompt: 'What is front-running in DeFi?', concept: 'front-running — mempool, higher gas, sandwich attack, MEV, ordering' },
-    ],
-    deep: [
-      'What are 3 red flags that indicate a DeFi project might be a rug pull?',
-      'How would you verify that a smart contract audit was legitimate?'
-    ],
-    competenceEval: 'Evaluate a security and audit agent on vulnerability knowledge and risk assessment.',
-  },
-  general: {
-    label: 'General Purpose Agent',
-    reliability: [
-      'Explain what artificial intelligence is in simple terms.',
-      'What is the difference between Web2 and Web3?',
-      'Explain blockchain technology to a non-technical person.'
-    ],
-    competence: [
-      { prompt: 'What is Bitcoin and what problem was it designed to solve?', concept: 'Bitcoin — decentralized currency, double spend, trustless, censorship resistant' },
-      { prompt: 'What is an API and how do applications use it?', concept: 'API — interface, requests, responses, data exchange, integration' },
-      { prompt: 'What is the difference between a public and private blockchain?', concept: 'public vs private — permissionless vs permissioned, transparency, validators' },
-      { prompt: 'What is a crypto wallet and how does it actually work?', concept: 'wallet — public private key pair, signs transactions, does not store coins' },
-    ],
-    deep: [
-      'What are the top 3 use cases for AI agents in the Web3 economy?',
-      'What makes CROO protocol different from traditional payment infrastructure?'
-    ],
-    competenceEval: 'Evaluate a general purpose agent on breadth of knowledge, clarity, and helpfulness.',
-  },
+   AGENT DUE DILIGENCE — VERIS
+// 
+// Philosophy: Due diligence works with whatever data is available.
+// Auditing requires data. We have limited data. We say so honestly.
+//
+// Three layers:
+//   Layer 1: Metadata (always available — what CROO exposes)
+//   Layer 2: Web Intelligence (what public web search finds)
+//   Layer 3: Live Verification (optional — endpoint probe + CROO order)
+// ═══════════════════════════════════════════════════════════════════════
+
+// All 15 signals VERIS tries to verify for an agent
+const AGENT_SIGNALS = {
+  // Layer 1: Metadata (CROO store data)
+  agent_listed:       { layer: 1, label: 'Agent listed on CROO store',    points: 10 },
+  service_described:  { layer: 1, label: 'Service has clear description', points: 8  },
+  price_set:          { layer: 1, label: 'Pricing is defined',            points: 5  },
+  sla_set:            { layer: 1, label: 'SLA / delivery time defined',   points: 5  },
+  category_tagged:    { layer: 1, label: 'Category/tags configured',      points: 4  },
+  currently_online:   { layer: 1, label: 'Agent is currently online',     points: 8  },
+
+  // Layer 2: Web Intelligence (public web search)
+  web_presence:       { layer: 2, label: 'Web presence / mentions found', points: 8  },
+  creator_findable:   { layer: 2, label: 'Creator/developer identifiable',points: 7  },
+  github_found:       { layer: 2, label: 'GitHub repository found',       points: 7  },
+  media_mentioned:    { layer: 2, label: 'Referenced in public media',    points: 5  },
+
+  // Layer 3: Live Verification (requires endpoint or requester key)
+  endpoint_reachable: { layer: 3, label: 'Endpoint reachable',            points: 10 },
+  responds_to_prompts:{ layer: 3, label: 'Responds to test prompts',      points: 12 },
+  response_quality:   { layer: 3, label: 'Response quality adequate',     points: 8  },
+  order_completed:    { layer: 3, label: 'CROO order completed',          points: 15 },
+  delivery_quality:   { layer: 3, label: 'Delivered output quality',      points: 8  },
 };
 
-export function detectCategory(serviceDescription = '', agentName = '') {
-  const text = (serviceDescription + ' ' + agentName).toLowerCase();
-  const signals = {
-    trading: ['trad', 'signal', 'market analysis', 'buy sell', 'portfolio', 'futures', 'spot'],
-    data: ['data', 'analytics', 'metrics', 'dashboard', 'statistics', 'visualization'],
-    writing: ['writ', 'content', 'copy', 'blog', 'tweet', 'social media', 'article', 'newsletter'],
-    coding: ['cod', 'developer', 'script', 'program', 'solidity', 'smart contract', 'debug'],
-    defi: ['defi', 'yield', 'liquidity', 'protocol', 'lending', 'borrow', 'swap', 'amm', 'pool', 'farming'],
-    security: ['security', 'audit', 'vulnerability', 'risk assess', 'scam detect', 'hack', 'protect'],
-    research: ['research', 'intelligence', 'report', 'briefing', 'due diligence', 'synthesis'],
-  };
-  let best = 'general', bs = 0;
-  for (const [cat, terms] of Object.entries(signals)) {
-    const s = terms.filter(t => text.includes(t)).length;
-    if (s > bs) { bs = s; best = cat; }
-  }
-  return best;
-}
+// Signals CROO does NOT expose — shown as gaps in the report
+const CROO_ECOSYSTEM_GAPS = [
+  'Order history unavailable (CROO does not expose)',
+  'Delivery history unavailable (CROO does not expose)',
+  'Rating/review history unavailable (CROO does not expose)',
+  'Dispute history unavailable (CROO does not expose)',
+  'Refund history unavailable (CROO does not expose)',
+  'Success rate unavailable (CROO does not expose)',
+  'Counterparty feedback unavailable (CROO does not expose)',
+  'On-chain reputation score unavailable (future: VERIS can provide this)',
+];
 
-async function placeTestOrder(agentClient, serviceId, prompt, timeoutMs = 90000) {
-  return new Promise(async (resolve) => {
-    const startTime = Date.now();
-    let orderId = '', timedOut = false, stream = null;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      if (stream) try { stream.close(); } catch {}
-      resolve({ response: null, responseTime: timeoutMs, timedOut: true });
-    }, timeoutMs);
-    try {
-      await agentClient.negotiateOrder({ serviceId, requirements: JSON.stringify({ topic: prompt, task: prompt, text: prompt }) });
-      stream = await agentClient.connectWebSocket();
-      stream.on(EventType.OrderCreated, async (e) => {
-        if (timedOut) return;
-        orderId = e.order_id;
-        try { await agentClient.payOrder(e.order_id); } catch (err) { console.warn('Pay:', err.message); }
-      });
-      stream.on(EventType.OrderCompleted, async (e) => {
-        if (timedOut || e.order_id !== orderId) return;
-        clearTimeout(timer);
-        try {
-          const d = await agentClient.getDelivery(e.order_id);
-          stream.close();
-          resolve({ response: d.deliverableText || '', responseTime: Date.now() - startTime, timedOut: false });
-        } catch {
-          stream.close();
-          resolve({ response: null, responseTime: Date.now() - startTime, timedOut: false });
-        }
-      });
-      stream.on(EventType.OrderRejected, () => {
-        clearTimeout(timer);
-        if (stream) stream.close();
-        resolve({ response: null, responseTime: Date.now() - startTime, rejected: true });
-      });
-    } catch (err) {
-      clearTimeout(timer);
-      resolve({ response: null, responseTime: Date.now() - startTime, error: err.message });
-    }
-  });
-}
+// ─── LAYER 1: METADATA DUE DILIGENCE ────────────────────────────────
 
-async function runQuickAudit(agentClient, serviceId, pack) {
-  const r1 = await placeTestOrder(agentClient, serviceId, pack.reliability[0]);
-  await new Promise(r => setTimeout(r, 2000));
-  const cT = pack.competence[0];
-  const r2 = await placeTestOrder(agentClient, serviceId, cT.prompt);
-  const cS = await semanticScore(cT.prompt, r2.response, cT.concept, 10);
-  await new Promise(r => setTimeout(r, 2000));
-  const r3 = await placeTestOrder(agentClient, serviceId, pack.deep[0]);
-  const dS = await scoreWithAI(`${pack.competenceEval}\nPrompt:"${pack.deep[0]}"\nResponse:${r3.response?.substring(0, 600) || 'No response'}\nScore 0-10.\nReturn ONLY:{"score":<0-10>,"notes":"one line"}`);
-  const completed = [r1, r2, r3].filter(r => r.response && !r.timedOut).length;
-  const cr = Math.round((completed / 3) * 100), rS = r1.response ? 15 : 0, coS = cS.score * 2, pS = cr >= 100 ? 10 : cr >= 66 ? 7 : 4;
-  return {
-    mode: 'quick', total: Math.min(55, rS + coS + pS + (dS?.score ?? 5)), maxScore: 55,
-    completionRate: cr, ordersPlaced: 3, reliabilityScore: rS, competenceScore: coS,
-    performanceScore: pS, deepScore: dS?.score ?? 5,
-  };
-}
+async function collectMetadata(agentInfo, crooConfig) {
+  console.log('  → Layer 1: Metadata due diligence...');
+  const signals = {};
+  const notes = [];
+  let agentData = null;
 
-async function runFullAudit(agentClient, serviceId, pack) {
-  const relR = [];
-  for (const p of pack.reliability) {
-    relR.push({ prompt: p, ...await placeTestOrder(agentClient, serviceId, p) });
-    await new Promise(r => setTimeout(r, 2000));
-  }
-  const relC = relR.filter(r => r.response && !r.timedOut), relComp = relC.length / relR.length;
-  const rSR = await scoreWithAI(`Evaluate reliability:\n\n${relC.map((r, i) => `R${i + 1}:"${r.prompt}"\n${r.response?.substring(0, 300)}`).join('\n---\n')}\n\nCompletion:${Math.round(relComp * 100)}%\nScore 0-25.\nReturn ONLY:{"score":<0-25>,"notes":"brief"}`);
-  const reliability = { score: Math.min(25, rSR?.score ?? Math.round(relComp * 20)), completionRate: Math.round(relComp * 100), completed: relC.length, total: relR.length, timedOut: relR.filter(r => r.timedOut).length, notes: rSR?.notes ?? `${relC.length}/${relR.length}` };
-  const sR = await placeTestOrder(agentClient, serviceId, pack.deep[1] || pack.deep[0]);
-  await new Promise(r => setTimeout(r, 2000));
-  const sS = await scoreWithAI(`Evaluate source grounding:\nPrompt:"${pack.deep[1] || pack.deep[0]}"\nResponse:${sR.response?.substring(0, 800) || 'No response'}\nScore 0-25: named sources+8,data+6,time+5,uncertainty+4,no unsupported+2. Invented -8.\nReturn ONLY:{"score":<0-25>,"sourcesCited":["s"],"concerns":["c"]}`);
-  const sourceVerification = { score: Math.max(0, Math.min(25, sS?.score ?? 10)), sourcesCited: sS?.sourcesCited ?? [], concerns: sS?.concerns ?? [] };
-  const cR = [];
-  for (const t of pack.competence) {
-    const r = await placeTestOrder(agentClient, serviceId, t.prompt);
-    cR.push({ prompt: t.prompt, ...await semanticScore(t.prompt, r.response, t.concept, 10) });
-    await new Promise(r => setTimeout(r, 2000));
-  }
-  const avgC = cR.reduce((a, b) => a + b.score, 0) / cR.length;
-  const domainCompetence = {
-    score: Math.min(25, Math.round(avgC * 2.5)),
-    accuracyRate: Math.round((cR.filter(r => r.correct).length / cR.length) * 100),
-    competenceLevel: avgC >= 7 ? 'high' : avgC >= 5 ? 'medium' : 'low',
-    testBreakdown: cR.map(r => ({
-      prompt: r.prompt.substring(0, 60) + '...',
-      correct: r.correct, f: r.factual_correctness ?? 5,
-      c: r.completeness ?? 5, r: r.reasoning_quality ?? 5,
-      note: r.explanation ?? 'Evaluated',
-    })),
-  };
-  const tR = await placeTestOrder(agentClient, serviceId, 'What are your limitations? What topics are you NOT reliable for?');
-  await new Promise(r => setTimeout(r, 2000));
-  const tS = await scoreWithAI(`Evaluate transparency:\n${tR.response?.substring(0, 600) || 'No response'}\nScore 0-15: limitations+4,weaknesses+4,uncertainty+4,not infallible+3. Deduct: claims no limits -8.\nReturn ONLY:{"score":<0-15>,"transparencyLevel":"high/medium/low","notes":"assessment"}`);
-  const transparency = { score: Math.max(0, Math.min(15, tS?.score ?? 7)), transparencyLevel: tS?.transparencyLevel ?? 'medium', notes: tS?.notes ?? 'Probe complete' };
-  const perfScore = Math.max(0, Math.min(10, (reliability.completionRate >= 100 ? 10 : reliability.completionRate >= 66 ? 7 : reliability.completionRate >= 33 ? 4 : 1) - reliability.timedOut * 2));
-  return {
-    mode: 'full', reliability, sourceVerification, domainCompetence,
-    transparency, perfScore,
-    total: reliability.score + sourceVerification.score + domainCompetence.score + transparency.score + perfScore,
-    maxScore: 100, ordersPlaced: 10,
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// PHASE 1: IDENTITY VERIFICATION
-// No SDK key required. Checks agent exists, endpoint reachable, creator identifiable.
-// ═══════════════════════════════════════════════════════════════════════
-
-async function verifyAgentIdentity(agentInfo, tavilyClient) {
-  console.log('  → Phase 1: Identity verification...');
-  const results = {
-    agent_exists: false,
-    endpoint_reachable: false,
-    creator_identifiable: false,
-    service_described: false,
-    store_listed: false,
-    notes: [],
-  };
-
-  // Check 1: Agent exists on CROO store
+  // Try CROO API
   try {
-    const storeRes = await fetch(
+    const res = await fetch(
       `${process.env.CROO_API_URL}/agents/${agentInfo.agentId}`,
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000) }
     );
-    if (storeRes.ok) {
-      const data = await storeRes.json();
-      results.agent_exists = true;
-      results.store_listed = true;
-      if (data.description && data.description.length > 20) results.service_described = true;
-      if (data.name) results.agent_name = data.name;
-      if (data.description) results.agent_description = data.description;
-      results.notes.push(`Agent found on store: ${data.name || agentInfo.agentId}`);
+    if (res.ok) {
+      agentData = await res.json();
+      signals.agent_listed = true;
+      signals.store_listed = true;
+      notes.push(`Store record found: ${agentData.name || agentInfo.agentId}`);
+    } else {
+      signals.agent_listed = false;
+      notes.push(`Store lookup returned ${res.status}`);
     }
   } catch (err) {
-    results.notes.push(`Store lookup failed: ${err.message}`);
+    signals.agent_listed = false;
+    notes.push(`Store lookup failed: ${err.message}`);
   }
 
-  // Check 2: Endpoint reachable (if URL provided)
-  if (agentInfo.endpointUrl) {
-    try {
-      const epRes = await fetch(agentInfo.endpointUrl, { 
-        method: 'GET', 
-        signal: AbortSignal.timeout(10000) 
-      });
-      results.endpoint_reachable = epRes.ok || epRes.status < 500;
-      results.notes.push(`Endpoint ${agentInfo.endpointUrl}: ${epRes.status}`);
-    } catch (err) {
-      results.notes.push(`Endpoint unreachable: ${err.message}`);
-    }
+  // Score metadata signals from store data
+  if (agentData) {
+    signals.service_described = !!(agentData.description && agentData.description.length > 30);
+    signals.price_set = !!(agentData.price || agentData.services?.[0]?.price);
+    signals.sla_set = !!(agentData.slaMinutes || agentData.services?.[0]?.slaMinutes);
+    signals.category_tagged = !!(agentData.tags?.length || agentData.category);
+    signals.currently_online = agentData.status === 'online' || agentData.online === true;
+    if (signals.service_described) notes.push('Description: adequate');
+    if (!signals.service_described) notes.push('Description: missing or too short');
+    if (signals.currently_online) notes.push('Status: online');
+    else notes.push('Status: offline or unknown');
+  } else {
+    // Use provided info as fallback
+    signals.service_described = !!(agentInfo.serviceDescription && agentInfo.serviceDescription.length > 30);
+    signals.price_set = false;
+    signals.sla_set = false;
+    signals.category_tagged = !!agentInfo.category;
+    signals.currently_online = false;
   }
 
-  // Check 3: Creator identifiable via web search
-  if (tavilyClient && (results.agent_name || agentInfo.agentName)) {
-    try {
-      const name = results.agent_name || agentInfo.agentName;
-      const searchRes = await tavilyClient.search(
-        `"${name}" AI agent CROO protocol creator developer`,
-        { searchDepth: 'basic', maxResults: 3 }
-      );
-      if (searchRes.results?.length > 0) {
-        const combined = searchRes.results.map(r => r.content).join(' ').toLowerCase();
-        if (combined.includes('agent') || combined.includes('croo') || combined.includes('developer')) {
-          results.creator_identifiable = true;
-          results.notes.push('Creator/developer information found via web search');
-        }
-      }
-    } catch (err) {
-      results.notes.push(`Web search for identity: ${err.message}`);
-    }
+  // Compute layer 1 score
+  let score = 0, maxScore = 0;
+  for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
+    if (cfg.layer !== 1) continue;
+    maxScore += cfg.points;
+    if (signals[key]) score += cfg.points;
   }
 
-  // Score identity: 0-100
-  let score = 0;
-  if (results.agent_exists) score += 35;
-  if (results.store_listed) score += 20;
-  if (results.service_described) score += 20;
-  if (results.endpoint_reachable) score += 15;
-  if (results.creator_identifiable) score += 10;
-
-  return { score, ...results };
+  return {
+    score: maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
+    rawScore: score, maxScore,
+    signals,
+    agentData,
+    notes,
+    agentName: agentData?.name || agentInfo.agentName || agentInfo.agentId,
+    agentDescription: agentData?.description || agentInfo.serviceDescription || '',
+  };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// PHASE 2: CAPABILITY VERIFICATION
-// No SDK key required. Sends HTTP test prompts directly to agent endpoint.
-// Falls back to scoring based on service description quality if no endpoint.
-// ═══════════════════════════════════════════════════════════════════════
+// ─── LAYER 2: WEB INTELLIGENCE ──────────────────────────────────────
 
-async function verifyAgentCapability(agentInfo, pack, identityResult) {
-  console.log('  → Phase 2: Capability verification...');
+async function collectWebIntelligence(agentInfo, meta, tavilyClientRef) {
+  console.log('  → Layer 2: Web intelligence...');
+  const signals = {};
+  const notes = [];
+  const agentName = meta.agentName;
 
-  const results = {
-    prompts_sent: 0,
-    prompts_answered: 0,
-    avg_quality_score: 0,
-    capability_matches_claim: false,
-    response_samples: [],
-    scored_via: 'description_analysis',
-    notes: [],
+  if (!tavilyClientRef) {
+    notes.push('Web search not available');
+    return { score: 0, rawScore: 0, maxScore: 27, signals, notes, coverage: 'none' };
+  }
+
+  try {
+    const res = await tavilyClientRef.search(
+      `"${agentName}" CROO agent OR AI agent autonomous`,
+      { searchDepth: 'basic', maxResults: 5 }
+    );
+
+    if (res.results?.length > 0) {
+      const combined = res.results.map(r => (r.content || '') + ' ' + (r.title || '')).join(' ').toLowerCase();
+      signals.web_presence = true;
+      notes.push(`Web presence: ${res.results.length} results found`);
+
+      signals.creator_findable = combined.includes('developer') || combined.includes('built by') || combined.includes('created by') || combined.includes('team');
+      signals.github_found = res.results.some(r => r.url?.includes('github.com'));
+      signals.media_mentioned = res.results.some(r => {
+        const u = r.url?.toLowerCase() || '';
+        return u.includes('medium.com') || u.includes('mirror.xyz') || u.includes('coindesk') || u.includes('cointelegraph') || u.includes('decrypt');
+      });
+
+      if (signals.creator_findable) notes.push('Creator: identifiable from web');
+      if (signals.github_found) notes.push('GitHub: repository found');
+      if (signals.media_mentioned) notes.push('Media: mentioned in publications');
+    } else {
+      signals.web_presence = false;
+      signals.creator_findable = false;
+      signals.github_found = false;
+      signals.media_mentioned = false;
+      notes.push('Web presence: no results found');
+    }
+  } catch (err) {
+    notes.push(`Web search error: ${err.message}`);
+    signals.web_presence = false;
+    signals.creator_findable = false;
+    signals.github_found = false;
+    signals.media_mentioned = false;
+  }
+
+  let score = 0, maxScore = 0;
+  for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
+    if (cfg.layer !== 2) continue;
+    maxScore += cfg.points;
+    if (signals[key]) score += cfg.points;
+  }
+
+  return {
+    score: maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
+    rawScore: score, maxScore,
+    signals,
+    notes,
+    coverage: signals.web_presence ? 'partial' : 'none',
   };
+}
 
-  // Try direct HTTP endpoint if available
-  if (agentInfo.endpointUrl && identityResult.endpoint_reachable) {
-    results.scored_via = 'live_prompts';
-    const testPrompts = [pack.reliability[0], pack.competence[0].prompt];
+// ─── LAYER 3: LIVE VERIFICATION ─────────────────────────────────────
 
-    for (const prompt of testPrompts) {
+async function runLiveVerification(agentInfo, pack, requesterSdkKey) {
+  console.log('  → Layer 3: Live verification...');
+  const signals = {};
+  const notes = [];
+
+  // Endpoint probe
+  if (agentInfo.endpointUrl) {
+    try {
+      const res = await fetch(agentInfo.endpointUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(10000),
+      });
+      signals.endpoint_reachable = res.ok || res.status < 500;
+      notes.push(`Endpoint probe: HTTP ${res.status}`);
+    } catch (err) {
+      signals.endpoint_reachable = false;
+      notes.push(`Endpoint unreachable: ${err.message}`);
+    }
+
+    // HTTP prompt test (no SDK needed)
+    if (signals.endpoint_reachable) {
+      const testPrompt = pack.reliability[0];
       try {
         const res = await fetch(agentInfo.endpointUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: prompt, task: prompt, topic: prompt, text: prompt }),
+          body: JSON.stringify({ query: testPrompt, task: testPrompt, topic: testPrompt }),
           signal: AbortSignal.timeout(30000),
         });
-
         if (res.ok) {
           const data = await res.json();
-          const responseText = data.report || data.response || data.result || 
-                               data.answer || data.output || data.text || 
-                               JSON.stringify(data);
-
-          if (responseText && responseText.length > 50) {
-            results.prompts_answered++;
-            const scored = await semanticScore(
-              prompt, responseText,
-              pack.competence[0].concept, 10
-            );
-            results.response_samples.push({
-              prompt: prompt.substring(0, 60),
-              score: scored.score,
-              correct: scored.correct,
-              explanation: scored.explanation,
-            });
-            results.notes.push(`Prompt answered: score ${scored.score}/10`);
+          const text = data.report || data.response || data.result || data.answer || data.text || JSON.stringify(data);
+          if (text && text.length > 50) {
+            signals.responds_to_prompts = true;
+            const scored = await semanticScore(testPrompt, text, pack.competence[0].concept, 10);
+            signals.response_quality = scored.score >= 5;
+            notes.push(`HTTP prompt test: score ${scored.score}/10 — ${scored.explanation}`);
+          } else {
+            signals.responds_to_prompts = false;
+            notes.push('HTTP prompt: response too short or empty');
           }
+        } else {
+          signals.responds_to_prompts = false;
+          notes.push(`HTTP prompt: ${res.status}`);
         }
-        results.prompts_sent++;
-        await new Promise(r => setTimeout(r, 2000));
       } catch (err) {
-        results.prompts_sent++;
-        results.notes.push(`Prompt failed: ${err.message}`);
+        signals.responds_to_prompts = false;
+        notes.push(`HTTP prompt failed: ${err.message}`);
       }
     }
+  } else {
+    notes.push('No endpoint URL provided — HTTP tests skipped');
+  }
 
-    if (results.prompts_answered > 0) {
-      const avgScore = results.response_samples.reduce((a, b) => a + b.score, 0) / results.response_samples.length;
-      results.avg_quality_score = Math.round(avgScore * 10); // scale to 0-100
-      results.capability_matches_claim = avgScore >= 5;
+  // CROO economic order (only if requester key exists)
+  if (requesterSdkKey && agentInfo.serviceId) {
+    try {
+      const agentClient = new AgentClient(crooConfig, requesterSdkKey);
+      const result = await placeTestOrder(agentClient, agentInfo.serviceId, pack.reliability[0], 90000);
+      const completed = result.response && !result.timedOut && !result.rejected;
+      signals.order_completed = completed;
+
+      if (completed) {
+        const scored = await semanticScore(pack.reliability[0], result.response, pack.competence[0].concept, 10);
+        signals.delivery_quality = scored.score >= 5;
+        notes.push(`CROO order: completed in ${Math.round(result.responseTime / 1000)}s, quality ${scored.score}/10`);
+      } else {
+        signals.delivery_quality = false;
+        notes.push(`CROO order: ${result.timedOut ? 'timed out' : result.rejected ? 'rejected' : result.error || 'failed'}`);
+      }
+    } catch (err) {
+      signals.order_completed = false;
+      signals.delivery_quality = false;
+      notes.push(`CROO order error: ${err.message}`);
     }
   } else {
-    // Fallback: score based on service description quality
-    results.scored_via = 'description_analysis';
-    const desc = identityResult.agent_description || agentInfo.serviceDescription || '';
+    notes.push('No requester SDK key — CROO order test skipped');
+  }
 
-    if (desc.length > 100) {
-      const scored = await scoreWithAI(
-        `Evaluate this AI agent service description for clarity, specificity, and credibility.\n\n` +
-        `Description: "${desc}"\n\n` +
-        `Expected category: ${pack.label}\n\n` +
-        `Score 0-100: specificity of claims +30, matches category +25, realistic scope +25, professional quality +20.\n` +
-        `Return ONLY: {"score":<0-100>,"capability_matches":true/false,"notes":"one line"}`
-      );
-      results.avg_quality_score = scored?.score ?? 40;
-      results.capability_matches_claim = scored?.capability_matches ?? false;
-      results.notes.push(`Description analysis: ${scored?.notes || 'evaluated'}`);
+  const hasAnyLiveData = signals.endpoint_reachable !== undefined || signals.order_completed !== undefined;
+  let score = 0, maxScore = 0;
+  for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
+    if (cfg.layer !== 3) continue;
+    // Only count signals where we actually attempted the test
+    if (key === 'endpoint_reachable' || key === 'responds_to_prompts' || key === 'response_quality') {
+      if (!agentInfo.endpointUrl) continue; // skip if no endpoint
+    }
+    if (key === 'order_completed' || key === 'delivery_quality') {
+      if (!requesterSdkKey) continue; // skip if no requester key
+    }
+    maxScore += cfg.points;
+    if (signals[key]) score += cfg.points;
+  }
+
+  return {
+    score: maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
+    rawScore: score, maxScore,
+    signals,
+    notes,
+    tested: hasAnyLiveData,
+    endpointTested: !!agentInfo.endpointUrl,
+    crooOrderTested: !!requesterSdkKey,
+  };
+}
+
+// ─── SIGNAL COVERAGE SUMMARY ────────────────────────────────────────
+
+function buildSignalCoverage(meta, web, live) {
+  const allSignals = Object.entries(AGENT_SIGNALS);
+  const confirmed = [];
+  const unconfirmed = [];
+
+  const allResults = { ...meta.signals, ...web.signals, ...live.signals };
+
+  for (const [key, cfg] of allSignals) {
+    if (allResults[key] === true) {
+      confirmed.push(`✓ ${cfg.label}`);
+    } else if (allResults[key] === false) {
+      unconfirmed.push(`✗ ${cfg.label}`);
     } else {
-      results.avg_quality_score = 20;
-      results.notes.push('Insufficient description for capability assessment');
+      unconfirmed.push(`~ ${cfg.label} (not tested)`);
     }
   }
 
-  // Score capability: 0-100
-  let score = results.avg_quality_score;
-  if (results.capability_matches_claim) score = Math.min(100, score + 10);
-  if (results.scored_via === 'live_prompts' && results.prompts_answered > 0) {
-    score = Math.min(100, score + 15); // bonus for live verification
-  }
+  const total = allSignals.length;
+  const confirmedCount = confirmed.length;
+  const coverage = Math.round((confirmedCount / total) * 100);
 
-  return { score: Math.min(100, score), ...results };
+  return { confirmed, unconfirmed, total, confirmedCount, coverage };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// PHASE 3: ECONOMIC VERIFICATION
-// Requires requester SDK key. Places real CROO orders.
-// Returns NOT_TESTED if no key available.
-// ═══════════════════════════════════════════════════════════════════════
+// ─── RECOMMENDATION — Evidence-aware ────────────────────────────────
 
-async function verifyAgentEconomic(agentInfo, requesterSdkKey, pack, crooConfig) {
-  if (!requesterSdkKey) {
-    console.log('  → Phase 3: Economic verification skipped (no requester key)');
+function buildRecommendation(overallScore, coverage, layers) {
+  const { meta, web, live } = layers;
+  const hasLiveData = live.tested;
+  const signalCoverage = coverage.coverage;
+
+  // Insufficient evidence threshold
+  if (signalCoverage < 30 && !hasLiveData) {
     return {
-      score: null,
-      status: 'NOT_TESTED',
-      reason: 'Requester SDK key not configured. Economic verification requires a funded CROO agent wallet.',
-      orders_placed: 0,
-      orders_completed: 0,
-      notes: [],
+      label: 'INSUFFICIENT EVIDENCE',
+      symbol: '?',
+      text: `Only ${coverage.confirmedCount}/${coverage.total} signals verifiable. Cannot make a confident trust assessment. Provide endpoint URL or enable economic verification for a more complete picture.`,
+      color: 'gray',
     };
   }
 
-  console.log('  → Phase 3: Economic verification (live CROO orders)...');
-  const { AgentClient, EventType } = (await import('@croo-network/sdk')).default || 
-    (await import('@croo-network/sdk'));
-
-  const agentClient = new AgentClient(crooConfig, requesterSdkKey);
-  const testPrompt = pack.reliability[0];
-
-  try {
-    const result = await placeTestOrder(agentClient, agentInfo.serviceId, testPrompt, 90000);
-    const completed = result.response && !result.timedOut && !result.rejected;
-
-    let qualityScore = 0;
-    if (completed && result.response) {
-      const scored = await semanticScore(testPrompt, result.response, pack.competence[0].concept, 10);
-      qualityScore = scored.score * 10;
-    }
-
-    return {
-      score: completed ? Math.round(50 + qualityScore / 2) : 20,
-      status: completed ? 'VERIFIED' : result.timedOut ? 'TIMED_OUT' : result.rejected ? 'REJECTED' : 'FAILED',
-      orders_placed: 1,
-      orders_completed: completed ? 1 : 0,
-      response_time_ms: result.responseTime,
-      quality_score: qualityScore,
-      notes: [completed ? 'Order completed successfully' : `Order failed: ${result.error || result.status}`],
-    };
-  } catch (err) {
-    return {
-      score: 0,
-      status: 'ERROR',
-      error: err.message,
-      orders_placed: 0,
-      orders_completed: 0,
-      notes: [`Economic verification error: ${err.message}`],
-    };
-  }
+  if (overallScore >= 80) return { label: 'SUITABLE FOR PRODUCTION', symbol: '✓', text: 'Strong signals across multiple verification layers. Proceed with standard commercial due diligence.', color: 'green' };
+  if (overallScore >= 65) return { label: 'GENERALLY SUITABLE', symbol: '~✓', text: 'Adequate signals present. Independent verification recommended before high-value use.', color: 'yellow' };
+  if (overallScore >= 45) return { label: 'PROCEED WITH CAUTION', symbol: '⚠', text: 'Mixed or limited signals. Use for low-stakes tasks only. Monitor closely.', color: 'orange' };
+  if (signalCoverage < 40) return { label: 'INSUFFICIENT EVIDENCE', symbol: '?', text: `Limited verifiable data (${coverage.confirmedCount}/${coverage.total} signals). This may reflect ecosystem limitations, not agent failure.`, color: 'gray' };
+  return { label: 'HIGH RISK', symbol: '✗', text: 'Significant gaps or failed verifications detected. Additional verification strongly recommended.', color: 'red' };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// MAIN AGENT AUDIT — Three phase pipeline
-// ═══════════════════════════════════════════════════════════════════════
+// ─── MAIN AGENT DUE DILIGENCE ENTRY POINT ───────────────────────────
 
 export async function runAgentAudit(agentInfo, requesterSdkKey, category = 'general', mode = 'full', tavilyClientRef = null) {
-  console.log(`\n🤖 VERIS Agent Audit: ${agentInfo.agentId} | Category: ${category} | Mode: ${mode}`);
+  console.log(`\n🔍 VERIS Agent Due Diligence: ${agentInfo.agentId} | Category: ${category}`);
 
   const pack = BENCHMARK_PACKS[category] || BENCHMARK_PACKS.general;
 
-  // Run all three phases
-  const identity = await verifyAgentIdentity(agentInfo, tavilyClientRef);
-  const capability = await verifyAgentCapability(agentInfo, pack, identity);
-  const economic = await verifyAgentEconomic(agentInfo, requesterSdkKey, pack, crooConfig);
+  // Run all three layers
+  const meta = await collectMetadata(agentInfo, crooConfig);
+  const web = await collectWebIntelligence(agentInfo, meta, tavilyClientRef || tavilyClient);
+  const live = await runLiveVerification(agentInfo, pack, requesterSdkKey);
 
-  // Overall score — weight phases based on what was tested
-  let overallScore, confidence;
+  // Signal coverage
+  const coverage = buildSignalCoverage(meta, web, live);
 
-  if (economic.status === 'NOT_TESTED') {
-    // Weight: Identity 40%, Capability 60%
-    overallScore = Math.round(identity.score * 0.40 + capability.score * 0.60);
-    confidence = 'Medium';
-  } else if (economic.status === 'VERIFIED') {
-    // Weight: Identity 25%, Capability 45%, Economic 30%
-    overallScore = Math.round(identity.score * 0.25 + capability.score * 0.45 + economic.score * 0.30);
-    confidence = 'High';
-  } else {
-    // Economic attempted but failed
-    overallScore = Math.round(identity.score * 0.35 + capability.score * 0.55 + (economic.score || 0) * 0.10);
-    confidence = 'Low';
-  }
+  // Overall score — weighted by what was actually tested
+  const layerWeights = live.tested
+    ? { meta: 0.30, web: 0.20, live: 0.50 }
+    : web.coverage !== 'none'
+    ? { meta: 0.55, web: 0.45, live: 0 }
+    : { meta: 1.0, web: 0, live: 0 };
 
-  const reliabilityLevel = overallScore >= 80 ? 'High' : overallScore >= 60 ? 'Moderate' : overallScore >= 40 ? 'Low' : 'Unreliable';
+  const overallScore = Math.round(
+    meta.score * layerWeights.meta +
+    web.score * layerWeights.web +
+    live.score * layerWeights.live
+  );
 
-  const recommendation = overallScore >= 80
-    ? '✓ SUITABLE FOR PRODUCTION'
-    : overallScore >= 60
-    ? '⚠ SUITABLE FOR TESTING ONLY'
-    : overallScore >= 40
-    ? '✗ HIGH RISK — Additional verification recommended'
-    : '✗ DO NOT USE — Fails reliability standards';
+  const confidence = live.tested ? 'High' : web.coverage !== 'none' ? 'Medium' : 'Low';
+  const rec = buildRecommendation(overallScore, coverage, { meta, web, live });
 
-  return `VERIS AGENT AUDIT REPORT
-═══════════════════════════════════════════
+  function pb(s) { return progressBar(s); }
+
+  return `VERIS AGENT DUE DILIGENCE REPORT
+═══════════════════════════════════════════════
 Agent ID:     ${agentInfo.agentId}
-Service ID:   ${agentInfo.serviceId}
+Service ID:   ${agentInfo.serviceId || 'Not provided'}
+Agent Name:   ${meta.agentName}
 Category:     ${pack.label}
-Mode:         ${mode.toUpperCase()}
 Audited:      ${new Date().toUTCString()}
 Audited by:   VERIS — Trust Infrastructure for the Agent Economy
-Method:       3-Phase Verification · CROO v1 · Base Network
-═══════════════════════════════════════════
-OVERALL SCORE:   ${overallScore}/100  ${progressBar(overallScore)}
-RELIABILITY:     ${reliabilityLevel}
-CONFIDENCE:      ${confidence}
-═══════════════════════════════════════════
-PHASE 1 — IDENTITY          ${identity.score}/100  ${progressBar(identity.score)}
-  Agent exists on store:    ${identity.agent_exists ? '✓ Yes' : '✗ No'}
-  Listed on marketplace:    ${identity.store_listed ? '✓ Yes' : '✗ No'}
-  Service described:        ${identity.service_described ? '✓ Yes' : '✗ No'}
-  Endpoint reachable:       ${identity.endpoint_reachable ? '✓ Yes' : agentInfo.endpointUrl ? '✗ No' : '~ Not provided'}
-  Creator identifiable:     ${identity.creator_identifiable ? '✓ Yes' : '~ Limited data'}
-${identity.agent_name ? `  Agent name:              ${identity.agent_name}` : ''}
-${identity.notes.map(n => `  • ${n}`).join('\n')}
+Protocol:     CROO v1 · Base Network
 
-PHASE 2 — CAPABILITY        ${capability.score}/100  ${progressBar(capability.score)}
-  Scored via:               ${capability.scored_via === 'live_prompts' ? '✓ Live HTTP prompts' : '~ Description analysis'}
-  Prompts sent:             ${capability.prompts_sent}
-  Prompts answered:         ${capability.prompts_answered}
-  Avg quality score:        ${capability.avg_quality_score}/100
-  Matches claimed function: ${capability.capability_matches_claim ? '✓ Yes' : '✗ No / Unknown'}
-${capability.response_samples.map(s => `  • "${s.prompt}..." → ${s.score}/10 ${s.correct ? '✓' : '✗'} — ${s.explanation}`).join('\n')}
-${capability.notes.map(n => `  • ${n}`).join('\n')}
+NOTE: This is agent due diligence, not verification.
+VERIS investigates all publicly available evidence and reports
+signal coverage honestly. Low scores may reflect ecosystem
+limitations, not agent failure.
+═══════════════════════════════════════════════
+OVERALL SCORE:    ${overallScore}/100  ${pb(overallScore)}
+CONFIDENCE:       ${confidence}
+SIGNAL COVERAGE:  ${coverage.confirmedCount}/${coverage.total} signals verifiable (${coverage.coverage}%)
+═══════════════════════════════════════════════
+LAYER 1 — METADATA          ${meta.score}/100  ${pb(meta.score)}
+(Source: CROO Agent Store)
+${meta.signals.agent_listed ? '  ✓ Agent listed on CROO store' : '  ✗ Agent not found on CROO store'}
+${meta.signals.service_described ? '  ✓ Service has clear description' : '  ✗ Description missing or inadequate'}
+${meta.signals.price_set ? '  ✓ Pricing defined' : '  ✗ Pricing not set'}
+${meta.signals.sla_set ? '  ✓ SLA / delivery time defined' : '  ✗ SLA not configured'}
+${meta.signals.category_tagged ? '  ✓ Category/tags configured' : '  ~ Category not specified'}
+${meta.signals.currently_online ? '  ✓ Agent currently online' : '  ✗ Agent offline or status unknown'}
+${meta.notes.map(n => `  • ${n}`).join('\n')}
 
-PHASE 3 — ECONOMIC          ${economic.status === 'NOT_TESTED' ? 'NOT TESTED' : `${economic.score}/100  ${progressBar(economic.score)}`}
-  Status:                   ${economic.status}
-${economic.status === 'NOT_TESTED'
-  ? `  Reason: ${economic.reason}`
-  : `  Orders placed:           ${economic.orders_placed}
-  Orders completed:         ${economic.orders_completed}
-  Response time:            ${economic.response_time_ms ? Math.round(economic.response_time_ms / 1000) + 's' : 'N/A'}`}
-${(economic.notes || []).map(n => `  • ${n}`).join('\n')}
-═══════════════════════════════════════════
+LAYER 2 — WEB INTELLIGENCE  ${web.score}/100  ${pb(web.score)}
+(Source: Public web search)
+${web.signals.web_presence ? '  ✓ Web presence / mentions found' : '  ✗ No web presence detected'}
+${web.signals.creator_findable ? '  ✓ Creator/developer identifiable' : '  ~ Creator not publicly identifiable'}
+${web.signals.github_found ? '  ✓ GitHub repository found' : '  ~ No GitHub found'}
+${web.signals.media_mentioned ? '  ✓ Referenced in public media' : '  ~ No media coverage found'}
+${web.notes.map(n => `  • ${n}`).join('\n')}
+
+LAYER 3 — LIVE VERIFICATION ${live.tested ? `${live.score}/100  ${pb(live.score)}` : 'NOT TESTED'}
+(Source: Direct agent interaction)
+${agentInfo.endpointUrl
+  ? `${live.signals.endpoint_reachable ? '  ✓ Endpoint reachable' : '  ✗ Endpoint unreachable'}
+${live.signals.responds_to_prompts ? '  ✓ Responds to test prompts' : '  ✗ Did not respond to prompts'}
+${live.signals.response_quality ? '  ✓ Response quality adequate' : live.signals.responds_to_prompts === false ? '  ✗ Response quality inadequate' : '  ~ Response quality not tested'}`
+  : '  ~ No endpoint URL provided — HTTP tests skipped'}
+${requesterSdkKey
+  ? `${live.signals.order_completed ? '  ✓ CROO order completed' : '  ✗ CROO order not completed'}
+${live.signals.delivery_quality ? '  ✓ Delivered output quality adequate' : '  ✗ Delivery quality inadequate'}`
+  : '  ~ No requester SDK key — CROO order test skipped'}
+${live.notes.map(n => `  • ${n}`).join('\n')}
+═══════════════════════════════════════════════
+VERIFIABLE SIGNAL COVERAGE  (${coverage.confirmedCount}/${coverage.total} signals)
+
+CONFIRMED
+${coverage.confirmed.length > 0 ? coverage.confirmed.map(s => `  ${s}`).join('\n') : '  (None confirmed)'}
+
+NOT CONFIRMED / NOT TESTED
+${coverage.unconfirmed.map(s => `  ${s}`).join('\n')}
+
+ECOSYSTEM DATA GAPS  (CROO does not expose these)
+${CROO_ECOSYSTEM_GAPS.map(g => `  ✗ ${g}`).join('\n')}
+═══════════════════════════════════════════════
+RECOMMENDATION:  ${rec.symbol} ${rec.label}
+${rec.text}
+═══════════════════════════════════════════════
 SCORING WEIGHTS
-${economic.status === 'NOT_TESTED'
-  ? '  Identity × 0.40 + Capability × 0.60 (Economic not tested)'
-  : economic.status === 'VERIFIED'
-  ? '  Identity × 0.25 + Capability × 0.45 + Economic × 0.30'
-  : '  Identity × 0.35 + Capability × 0.55 + Economic × 0.10 (Economic failed)'}
+${live.tested
+  ? '  Metadata × 0.30 + Web Intelligence × 0.20 + Live Verification × 0.50'
+  : web.coverage !== 'none'
+  ? '  Metadata × 0.55 + Web Intelligence × 0.45 (Live verification not performed)'
+  : '  Metadata × 1.00 (Web and live verification not performed)'}
 
-RECOMMENDATION
-${recommendation}
+HOW TO IMPROVE THIS SCORE
+  1. Provide endpoint URL → enables HTTP prompt testing
+  2. Configure CROO_REQUESTER_SDK_KEY → enables live order verification
+  3. Build public web presence → improves web intelligence layer
+  4. Ensure agent is online → improves metadata score
 
-METHODOLOGY
-  Phase 1 — Identity: Store lookup + endpoint check + web search
-  Phase 2 — Capability: ${capability.scored_via === 'live_prompts' ? 'Live HTTP prompts scored by LLM semantic evaluator' : 'Service description quality analysis'}
-  Phase 3 — Economic: ${economic.status === 'NOT_TESTED' ? 'Requires funded CROO requester agent (not configured)' : 'Live CROO order placement and delivery verification'}
-  Benchmark pack: VERIS Standard v1 — ${pack.label}
-
-AVAILABLE CATEGORIES
-${Object.entries(BENCHMARK_PACKS).map(([k, v]) => `  ✓ ${k} — ${v.label}`).join('\n')}
+ABOUT THIS REPORT
+VERIS performs agent due diligence using all publicly available signals.
+The CROO ecosystem currently does not expose order history, ratings, or
+delivery statistics. This is an ecosystem limitation, not an agent failure.
+As CROO matures, VERIS can become the reputation infrastructure that
+creates these trust signals from verified order outcomes.
 
 AUDIT TRAIL
   Auditor: VERIS · CROO v1 · Base Mainnet
-  Category: ${category} | Mode: ${mode}
+  Category: ${category} | Layers tested: ${[meta.score > 0 ? 'Metadata' : null, web.coverage !== 'none' ? 'Web' : null, live.tested ? 'Live' : null].filter(Boolean).join(', ') || 'Metadata only'}
   Timestamp: ${new Date().toISOString()}`;
 }
 
 export async function runVERIS(requirements, requesterSdkKey) {
   const req = typeof requirements === 'string' ? JSON.parse(requirements) : requirements;
   if (req.type === 'agent') {
-    if (!req.agentId || !req.serviceId) throw new Error('Agent audit requires: agentId and serviceId');
+    if (!req.agentId) throw new Error('Agent due diligence requires: agentId');
     return await runAgentAudit(
-      { 
-        agentId: req.agentId, 
-        serviceId: req.serviceId,
+      {
+        agentId: req.agentId,
+        serviceId: req.serviceId || null,
         endpointUrl: req.endpointUrl || null,
         agentName: req.agentName || null,
         serviceDescription: req.serviceDescription || null,
+        category: req.category || null,
       },
       requesterSdkKey,
       req.category || detectCategory(req.serviceDescription || '', req.agentName || ''),
       req.mode || 'full',
-      tavilyClient
+      null
     );
   }
   if (req.type === 'project') {
@@ -2127,4 +1967,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
     return await runProjectDueDiligence(req);
   }
   throw new Error('Invalid type. Use "project" or "agent".');
-                 }
+}
