@@ -1484,7 +1484,7 @@ export async function runBenchmarkSuite(verbose=false) {
 // AGENT BENCHMARK PACKS + AUDIT
 // ═══════════════════════════════════════════════════════════════════════
 
-   AGENT DUE DILIGENCE — VERIS
+//   AGENT DUE DILIGENCE — VERIS
 // 
 // Philosophy: Due diligence works with whatever data is available.
 // Auditing requires data. We have limited data. We say so honestly.
