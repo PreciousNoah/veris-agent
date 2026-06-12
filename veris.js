@@ -138,38 +138,38 @@ const ENHANCED_ENTITY_MAP = {
   'github.com/bitcoin':      { entity: 'Bitcoin',           type: 'l1l2', network: 'Bitcoin' },
   'bitcoin':                 { entity: 'Bitcoin',           type: 'l1l2', network: 'Bitcoin' },
   'btc':                     { entity: 'Bitcoin',           type: 'l1l2', network: 'Bitcoin' },
-  
+
   // Ethereum ecosystem
   'ethereum.org':            { entity: 'Ethereum',          type: 'l1l2', network: 'Ethereum' },
   'ethresear.ch':            { entity: 'Ethereum',          type: 'l1l2', network: 'Ethereum' },
   'github.com/ethereum':     { entity: 'Ethereum',          type: 'l1l2', network: 'Ethereum' },
   'ethereum':                { entity: 'Ethereum',          type: 'l1l2', network: 'Ethereum' },
   'eth':                     { entity: 'Ethereum',          type: 'l1l2', network: 'Ethereum' },
-  
+
   // Solana
   'solana.com':              { entity: 'Solana',            type: 'l1l2', network: 'Solana' },
   'solana.org':              { entity: 'Solana',            type: 'l1l2', network: 'Solana' },
   'github.com/solana-labs':  { entity: 'Solana',            type: 'l1l2', network: 'Solana' },
-  
-  // Exchanges (separate from networks)
+
+  // Exchanges
   'coinbase.com':            { entity: 'Coinbase',          type: 'exchange' },
   'binance.com':             { entity: 'Binance',           type: 'exchange' },
   'kraken.com':              { entity: 'Kraken',            type: 'exchange' },
-  
-  // DeFi protocols (separate from networks)
+
+  // DeFi protocols
   'uniswap.org':             { entity: 'Uniswap',           type: 'defi' },
   'app.uniswap.org':         { entity: 'Uniswap',           type: 'defi' },
   'aave.com':                { entity: 'Aave',              type: 'defi' },
   'app.aave.com':            { entity: 'Aave',              type: 'defi' },
-  
+
   // Trading platforms
-  'hyperliquid.xyz':         { entity: 'Hyperliquid',      type: 'trading_protocol' },
-  'app.hyperliquid.xyz':     { entity: 'Hyperliquid',      type: 'trading_protocol' },
-  
+  'hyperliquid.xyz':         { entity: 'Hyperliquid',       type: 'trading_protocol' },
+  'app.hyperliquid.xyz':     { entity: 'Hyperliquid',       type: 'trading_protocol' },
+
   // Infrastructure
-  'chain.link':              { entity: 'Chainlink',        type: 'tooling' },
-  'xrpl.org':                { entity: 'XRPL',             type: 'infrastructure' },
-  'ripple.com':              { entity: 'Ripple',           type: 'infrastructure' },
+  'chain.link':              { entity: 'Chainlink',         type: 'tooling' },
+  'xrpl.org':                { entity: 'XRPL',              type: 'infrastructure' },
+  'ripple.com':              { entity: 'Ripple',            type: 'infrastructure' },
 };
 
 export function resolveEntity(project) {
@@ -178,11 +178,9 @@ export function resolveEntity(project) {
     .replace(/^https?:\/\//, '')
     .replace(/\/$/, '')
     .trim();
-  
-  // Try direct match first
+
   let resolved = ENHANCED_ENTITY_MAP[input];
-  
-  // Try partial match if no direct match
+
   if (!resolved) {
     for (const [key, value] of Object.entries(ENHANCED_ENTITY_MAP)) {
       if (input.includes(key) || key.includes(input)) {
@@ -191,7 +189,7 @@ export function resolveEntity(project) {
       }
     }
   }
-  
+
   if (resolved) {
     const originalName = project.name;
     return {
@@ -203,32 +201,28 @@ export function resolveEntity(project) {
       note: resolved.note,
     };
   }
-  
+
   return project;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // SIGNAL RESOLVER — Apply ground truth + flag insufficient evidence
-// Runs BEFORE quality gates to ensure known entities aren't penalized
 // ═══════════════════════════════════════════════════════════════════════
 
 function resolveSignals(evidence, projectName, entityType) {
   const resolved = { ...evidence };
   let resolvedCount = 0;
-  
-  // Apply ground truth for known entities
+
   const groundTruth = ENTITY_GROUND_TRUTH[projectName];
   if (groundTruth) {
     for (const [key, gtValue] of Object.entries(groundTruth)) {
       if (key === 'founded_year' || key === 'ecosystem_level' || key === 'adoption_level') {
-        // Always trust ground truth for metadata
         if (key === 'founded_year') resolved.founded_year = gtValue;
         if (key === 'ecosystem_level') resolved.ecosystem_level = gtValue;
         if (key === 'adoption_level') resolved.adoption_level = gtValue;
         continue;
       }
-      
-      // Apply ground truth if Groq returned UNKNOWN or had low confidence
+
       const extractedConfidence = resolved.confidence_per_signal?.[key] || 0;
       if ((resolved[key] === 'UNKNOWN' || extractedConfidence < 80) && gtValue.value === 'YES') {
         resolved[key] = 'YES';
@@ -244,79 +238,69 @@ function resolveSignals(evidence, projectName, entityType) {
       console.log(`  📚 Signal resolver: Applied ${resolvedCount} ground truth facts for ${projectName}`);
     }
   }
-  
-  // Check for mandatory signals
+
   const mandatorySignals = MANDATORY_SIGNALS_BY_TYPE[entityType] || [];
-  const missingMandatory = mandatorySignals.filter(signal => 
+  const missingMandatory = mandatorySignals.filter(signal =>
     resolved[signal] === 'UNKNOWN'
   );
-  
-  // If ALL mandatory signals are UNKNOWN, flag as insufficient evidence
+
   if (missingMandatory.length === mandatorySignals.length && mandatorySignals.length > 0) {
     console.warn(`  ⚠ INSUFFICIENT EVIDENCE: All ${mandatorySignals.length} mandatory signals for ${entityType} are UNKNOWN`);
     resolved._insufficient_evidence = true;
     resolved._missing_mandatory = missingMandatory;
   }
-  
+
   return resolved;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// EVIDENCE CONFIDENCE GATING — Prevents weak evidence from scoring
-// confidence < 60% → UNKNOWN (N/A — doesn't count, no score impact)
-// 60-79% → WEAK (kept as YES but flagged, receives reduced weight)
-// 80%+ → CONFIRMED (full weight)
-// Distinction: UNKNOWN = N/A (not "0" which means confirmed absent)
+// EVIDENCE CONFIDENCE GATING
 // ═══════════════════════════════════════════════════════════════════════
 
 function applyConfidenceGate(evidence) {
   const gated = { ...evidence };
   let downgradedCount = 0;
   let flaggedCount = 0;
-  
+
   for (const [key, value] of Object.entries(evidence)) {
     if (value !== 'YES') continue;
-    if (key.endsWith('_urls') || key === 'confidence_per_signal' || 
+    if (key.endsWith('_urls') || key === 'confidence_per_signal' ||
         key === 'evidence_citations' || key === 'contradictions' ||
-        key === 'founder_names' || key === 'audit_firm' || 
-        key === 'founded_year' || key === 'ecosystem_level' || 
+        key === 'founder_names' || key === 'audit_firm' ||
+        key === 'founded_year' || key === 'ecosystem_level' ||
         key === 'adoption_level' || key.startsWith('_')) continue;
-    
+
     const confidence = evidence.confidence_per_signal?.[key];
-    
-    // No confidence estimate → UNKNOWN (not enough evidence to confirm)
+
     if (confidence === undefined || confidence === null) {
       gated[key] = 'UNKNOWN';
       if (gated[`${key}_urls`]) gated[`${key}_urls`] = [];
       downgradedCount++;
       continue;
     }
-    
-    // Below 60% → UNKNOWN (evidence exists but too weak to confirm)
+
     if (confidence < 60) {
       gated[key] = 'UNKNOWN';
       if (gated[`${key}_urls`]) gated[`${key}_urls`] = [];
       downgradedCount++;
       continue;
     }
-    
-    // 60-79% → Keep as YES but flag as weak evidence
+
     if (confidence < 80) {
       gated[`${key}_weak`] = true;
       flaggedCount++;
     }
   }
-  
+
   if (downgradedCount > 0 || flaggedCount > 0) {
     console.log(`  🔍 Evidence quality: ${downgradedCount} signals → UNKNOWN (insufficient/weak evidence), ${flaggedCount} flagged as weak`);
   }
-  
+
   return gated;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// SOURCE VALIDATION — Certain signals REQUIRE official sources
-// If only community/inferred sources exist → UNKNOWN
+// SOURCE VALIDATION
 // ═══════════════════════════════════════════════════════════════════════
 
 const SIGNALS_REQUIRING_OFFICIAL = [
@@ -328,29 +312,27 @@ const SIGNALS_REQUIRING_OFFICIAL = [
 function validateSourceQuality(evidence, projectName) {
   const validated = { ...evidence };
   let invalidatedCount = 0;
-  
+
   for (const signal of SIGNALS_REQUIRING_OFFICIAL) {
     if (validated[signal] !== 'YES') continue;
-    
+
     const urls = validated[`${signal}_urls`] || [];
-    
-    // Check if ANY URL is tier1 (official)
-    const hasOfficialSource = urls.some(url => 
+
+    const hasOfficialSource = urls.some(url =>
       classifySourceTier(url, projectName) === 'tier1'
     );
-    
-    // For critical signals, require at least tier1 source
+
     if (!hasOfficialSource) {
       validated[signal] = 'UNKNOWN';
       validated[`${signal}_urls`] = [];
       invalidatedCount++;
     }
   }
-  
+
   if (invalidatedCount > 0) {
     console.log(`  ⚠ Source validation: ${invalidatedCount} signals require official source`);
   }
-  
+
   return validated;
 }
 
@@ -406,7 +388,7 @@ function classifySourceTier(url = '', projectName = '') {
 const TIER_WEIGHTS = { tier1: 1.00, tier2: 0.75, tier3: 0.40, tier4: 0.15 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// SIGNAL REGISTRY  — one signal, one bucket, no double-counting
+// SIGNAL REGISTRY
 // ═══════════════════════════════════════════════════════════════════════
 
 const LEGITIMACY_SIGNALS = {
@@ -683,11 +665,10 @@ function computeLegitimacyScore(evidence, template, projectName) {
     const tier  = bestTierName(urls, projectName);
     const tierW = TIER_WEIGHTS[tier];
     const t1t2  = urls.filter(u => ['tier1','tier2'].includes(classifySourceTier(u, projectName))).length;
-    
-    // Apply weak evidence penalty
+
     const isWeak = ev[`${sigKey}_weak`] === true;
     const weakMultiplier = isWeak ? 0.75 : 1.0;
-    
+
     const cons  = t1t2 >= 2 ? 1.10 : t1t2 === 1 ? 1.00 : urls.length >= 2 ? 0.90 : 0.75;
     const pts   = Math.round(basePoints * tierW * cons * weakMultiplier);
 
@@ -718,13 +699,13 @@ function computeLegitimacyScore(evidence, template, projectName) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// CLEAN MATURITY SCORING — Sub-scores for each dimension
+// CLEAN MATURITY SCORING
 // ═══════════════════════════════════════════════════════════════════════
 
 function computeCleanMaturityScore(evidence) {
   const lFlags = longevityFlags(evidence);
   const ev = { ...evidence, ...lFlags };
-  
+
   const subScores = {
     longevity: calculateLongevitySubscore(ev),
     adoption: calculateAdoptionSubscore(ev),
@@ -733,7 +714,7 @@ function computeCleanMaturityScore(evidence) {
     security: calculateSecuritySubscore(ev),
     market: calculateMarketSubscore(ev),
   };
-  
+
   const weights = {
     longevity: 0.25,
     adoption: 0.20,
@@ -742,19 +723,19 @@ function computeCleanMaturityScore(evidence) {
     security: 0.10,
     market: 0.10,
   };
-  
+
   const maturityScore = Math.round(
-    Object.entries(subScores).reduce((sum, [key, score]) => 
+    Object.entries(subScores).reduce((sum, [key, score]) =>
       sum + (score * weights[key]), 0
     )
   );
-  
+
   const applied = Object.entries(subScores).map(([key, score]) => ({
     category: key.charAt(0).toUpperCase() + key.slice(1),
     score,
     label: getMaturityCategoryLabel(key, score),
   }));
-  
+
   return { maturityScore, subScores, applied };
 }
 
@@ -829,7 +810,7 @@ function getMaturityCategoryLabel(category, score) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// REASONABLENESS LAYER — Validates scores against known benchmarks
+// REASONABLENESS LAYER
 // ═══════════════════════════════════════════════════════════════════════
 
 const ENTITY_BENCHMARKS = {
@@ -847,15 +828,15 @@ const ENTITY_BENCHMARKS = {
 };
 
 function validateReasonableness(projectName, legitimacyScore, maturityScore) {
-  const key = Object.keys(ENTITY_BENCHMARKS).find(k => 
+  const key = Object.keys(ENTITY_BENCHMARKS).find(k =>
     projectName.toLowerCase().includes(k.toLowerCase())
   );
-  
+
   if (!key) return { reasonable: true, note: null };
-  
+
   const benchmark = ENTITY_BENCHMARKS[key];
   const issues = [];
-  
+
   if (legitimacyScore < benchmark.expectedLegitimacy.min) {
     issues.push(`Legitimacy ${legitimacyScore} below expected min ${benchmark.expectedLegitimacy.min} for ${benchmark.type}`);
   }
@@ -868,13 +849,13 @@ function validateReasonableness(projectName, legitimacyScore, maturityScore) {
   if (benchmark.criticalExpected && legitimacyScore > 30) {
     issues.push(`CRITICAL: ${key} should show CRITICAL RISK but scored ${legitimacyScore}`);
   }
-  
+
   if (issues.length > 0) {
     console.warn(`\n⚠ REASONABLENESS CHECK FAILED for ${projectName}:`);
     issues.forEach(i => console.warn(`  - ${i}`));
     return { reasonable: false, issues, benchmark: benchmark.type };
   }
-  
+
   return { reasonable: true, benchmark: benchmark.type };
 }
 
@@ -1132,7 +1113,6 @@ function defaultConfidence(tier) {
 // ═══════════════════════════════════════════════════════════════════════
 
 export async function runProjectDueDiligence(project) {
-  // Step 0: Enhanced entity resolution
   project = resolveEntity(project);
   console.log(`\n🔍 VERIS Due Diligence: ${project.name}${project.resolvedFrom ? ` (resolved from: ${project.resolvedFrom})` : ''}`);
   if (project.note) console.log(`  ⚠ Note: ${project.note}`);
@@ -1141,7 +1121,6 @@ export async function runProjectDueDiligence(project) {
   const template  = ENTITY_TEMPLATES[entityKey] || ENTITY_TEMPLATES.general;
   console.log(`  Entity class: ${template.label}`);
 
-  // Collect
   console.log('  → Collecting evidence...');
   const queries = buildSearchQueries(project, entityKey);
   const searchResults = await Promise.all(
@@ -1151,69 +1130,56 @@ export async function runProjectDueDiligence(project) {
   const totalSources = searchResults.reduce((a,r) => a+r.sourceCount, 0);
   const combinedText = searchResults.filter(r => r.text).map(r => `=== ${r.key.toUpperCase()} ===\n${r.text}`).join('\n\n');
 
-  // Extract
   console.log('  → Extracting evidence...');
   const rawEvidence = await extractEvidence(combinedText, project.name, template.label);
 
-  // SIGNAL RESOLVER — Apply ground truth BEFORE quality gates
   console.log('  → Resolving signals...');
   let evidence = resolveSignals(rawEvidence, project.name, entityKey);
 
-  // Quality gates
   console.log('  → Validating evidence quality...');
   evidence = applyConfidenceGate(evidence);
   evidence = validateSourceQuality(evidence, project.name);
 
-  // Hard events
   const { confirmed: hardEvents, unverified: unverifiedHard } = checkHardEvents(evidence);
 
-  // Check for insufficient evidence state
   const insufficientEvidence = evidence._insufficient_evidence || false;
 
-  // Score
   console.log('  → Scoring...');
   const legit   = computeLegitimacyScore(evidence, template, project.name);
   const mat     = computeCleanMaturityScore(evidence);
   const opRisk  = checkOperationalRisk(evidence);
 
-  // If insufficient evidence, scores are N/A not 0
-  const legitimacyScore = hardEvents.length > 0 ? 0 
-    : insufficientEvidence ? 'N/A' 
+  const legitimacyScore = hardEvents.length > 0 ? 0
+    : insufficientEvidence ? 'N/A'
     : legit.legitimacyScore;
-  const maturityScore   = hardEvents.length > 0 ? 0 
-    : insufficientEvidence ? 'N/A' 
+  const maturityScore   = hardEvents.length > 0 ? 0
+    : insufficientEvidence ? 'N/A'
     : mat.maturityScore;
 
-  // Confidence
   const confidence = computeConfidence(evidence, allSources);
 
-  // Recommendation
-  const rec = insufficientEvidence 
+  const rec = insufficientEvidence
     ? { label: 'INSUFFICIENT DATA', symbol: '?', band: 'N/A',
         text: `Cannot score — all ${evidence._missing_mandatory?.length || ''} mandatory signals for ${template.label} are UNKNOWN. More evidence required.` }
     : getRecommendation(legitimacyScore, maturityScore, opRisk.level, hardEvents);
 
-  // Reasonableness check
-  const reasonableness = insufficientEvidence 
+  const reasonableness = insufficientEvidence
     ? { reasonable: true, note: 'Skipped — insufficient evidence' }
     : validateReasonableness(project.name, legitimacyScore, maturityScore);
 
-  // Calibration
-  const calibration = checkCalibration(project.name, 
-    typeof legitimacyScore === 'number' ? legitimacyScore : 0, 
+  const calibration = checkCalibration(project.name,
+    typeof legitimacyScore === 'number' ? legitimacyScore : 0,
     typeof maturityScore === 'number' ? maturityScore : 0
   );
 
-  // Source authority breakdown
   const srcBreakdown = sourceAuthorityBreakdown(allSources, project.name);
 
-  // Verdict text
   console.log('  → Generating verdict...');
   const allConfirmedSignals = [
     ...legit.applied.identity, ...legit.applied.transparency,
     ...legit.applied.verification, ...legit.applied.reputation,
   ].map(s => s.label);
-  
+
   const verdictPrompt = insufficientEvidence
     ? `Write a 2-3 sentence verdict for "${project.name}" explaining that there is INSUFFICIENT EVIDENCE to score. Mandatory signals missing: ${evidence._missing_mandatory?.join(', ') || 'all'}. Do not make claims about legitimacy.`
     : `Write a 2-3 sentence factual verdict for "${project.name}" (${template.label}).\n\n` +
@@ -1225,27 +1191,26 @@ export async function runProjectDueDiligence(project) {
 
   const verdictText = await groqSynthesize(
     verdictPrompt,
-    insufficientEvidence 
+    insufficientEvidence
       ? 'You are a factual research assistant. Acknowledge uncertainty. Do not make claims without evidence.'
       : 'Write a factual trust audit verdict. Do not add information not listed above. Be direct.'
   );
 
-  // Format report
   const hardWarn = hardEvents.length > 0
     ? `\n⛔ HARD TRUST EVENT — All scores overridden to 0\n` +
       hardEvents.map(e=>`   ${e.label}\n   Source: ${e.citation.source_url}\n   Quote:  "${e.citation.quote}"`).join('\n')
     : '';
-  
+
   const insufficientWarn = insufficientEvidence
     ? `\n⚠  INSUFFICIENT EVIDENCE — Scores are N/A, not 0\n   Missing mandatory signals: ${evidence._missing_mandatory?.join(', ') || 'all'}\n   This does NOT mean the project is illegitimate. It means VERIS cannot verify it.`
     : '';
-  
+
   const lowConfWarn = !insufficientEvidence && confidence < 0.40
     ? `\n⚠  LOW CONFIDENCE (${Math.round(confidence*100)}%): Limited sources. UNKNOWN ≠ negative.`
     : !insufficientEvidence && confidence < 0.65
     ? `\n~  MODERATE CONFIDENCE (${Math.round(confidence*100)}%): Some areas have limited coverage.`
     : '';
-  
+
   const anomalyWarn = calibration.anomaly ? `\n⚠  SCORE ANOMALY: ${calibration.note}` : '';
   const reasonablenessWarn = !reasonableness.reasonable && !insufficientEvidence
     ? `\n⚠  REASONABLENESS CHECK FAILED (${reasonableness.benchmark})\n${reasonableness.issues.map(i => `   ${i}`).join('\n')}`
@@ -1272,7 +1237,7 @@ export async function runProjectDueDiligence(project) {
     )
   ])];
   const missingSignals = allTemplateSignals.filter(k => (evidence[k]||'UNKNOWN') === 'UNKNOWN');
-  
+
   const missingBlock = missingSignals.length > 0
     ? `EVIDENCE NOT LOCATED (${insufficientEvidence ? 'N/A' : 'UNKNOWN'} — no score impact)\n` +
       missingSignals.map(k => `  ${insufficientEvidence ? 'N/A' : '?'} ${SIGNAL_LABELS[k]||k}`).join('\n')
@@ -1291,12 +1256,12 @@ export async function runProjectDueDiligence(project) {
       '\n\n  NOTE: Operational incidents do not reduce legitimacy or maturity scores.'
     : '  ✓ None confirmed';
 
-  const legitimacyDisplay = insufficientEvidence 
-    ? 'N/A (Insufficient Evidence)' 
+  const legitimacyDisplay = insufficientEvidence
+    ? 'N/A (Insufficient Evidence)'
     : `${legitimacyScore}/100  ${progressBar(legitimacyScore)}`;
-  
-  const maturityDisplay = insufficientEvidence 
-    ? 'N/A (Insufficient Evidence)' 
+
+  const maturityDisplay = insufficientEvidence
+    ? 'N/A (Insufficient Evidence)'
     : `${maturityScore}/100  ${progressBar(maturityScore)}`;
 
   return `VERIS TRUST REPORT
@@ -1442,7 +1407,7 @@ export async function runBenchmarkSuite(verbose=false) {
       const report = await runProjectDueDiligence({ name:test.name, entityType:test.entityType });
       const legitMatch = report.match(/LEGITIMACY:\s+(.+)/);
       const matMatch = report.match(/MATURITY:\s+(.+)/);
-      
+
       const lStr = legitMatch?.[1]?.trim() || '0';
       const mStr = matMatch?.[1]?.trim() || '0';
       const l = lStr === 'N/A' ? 0 : parseInt(lStr);
@@ -1481,37 +1446,71 @@ export async function runBenchmarkSuite(verbose=false) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// AGENT BENCHMARK PACKS + AUDIT
+// BENCHMARK PACKS — Used by agent due diligence layer
 // ═══════════════════════════════════════════════════════════════════════
 
-//   AGENT DUE DILIGENCE — VERIS
-// 
-// Philosophy: Due diligence works with whatever data is available.
-// Auditing requires data. We have limited data. We say so honestly.
-//
-// Three layers:
-//   Layer 1: Metadata (always available — what CROO exposes)
-//   Layer 2: Web Intelligence (what public web search finds)
-//   Layer 3: Live Verification (optional — endpoint probe + CROO order)
+const BENCHMARK_PACKS = {
+  general: {
+    label: 'General Agent',
+    reliability: ['What is 2 + 2?', 'Summarize this in one sentence: The sky is blue.'],
+    competence: [{ concept: 'basic reasoning and instruction following', weight: 1.0 }],
+  },
+  research: {
+    label: 'Research Agent',
+    reliability: ['What are the main causes of inflation?', 'Summarize the key points of the Bitcoin whitepaper.'],
+    competence: [{ concept: 'research synthesis and factual accuracy', weight: 1.0 }],
+  },
+  trading: {
+    label: 'Trading / Finance Agent',
+    reliability: ['What is a limit order?', 'Explain the difference between spot and futures trading.'],
+    competence: [{ concept: 'trading concepts and financial accuracy', weight: 1.0 }],
+  },
+  coding: {
+    label: 'Coding Agent',
+    reliability: ['Write a function to reverse a string in Python.', 'What does async/await do in JavaScript?'],
+    competence: [{ concept: 'code correctness and technical explanation', weight: 1.0 }],
+  },
+  data: {
+    label: 'Data Agent',
+    reliability: ['What is the difference between mean and median?', 'Describe what a JOIN does in SQL.'],
+    competence: [{ concept: 'data analysis and statistical reasoning', weight: 1.0 }],
+  },
+  writing: {
+    label: 'Writing Agent',
+    reliability: ['Write a one-sentence product description for a crypto wallet.', 'What makes a good call to action?'],
+    competence: [{ concept: 'writing quality and clarity', weight: 1.0 }],
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// CATEGORY DETECTION — Used by runVERIS for agent type inference
 // ═══════════════════════════════════════════════════════════════════════
 
-// All 15 signals VERIS tries to verify for an agent
+function detectCategory(description = '', name = '') {
+  const text = (description + ' ' + name).toLowerCase();
+  if (text.match(/trad|finance|swap|defi|price|market/)) return 'trading';
+  if (text.match(/code|develop|script|program|github/)) return 'coding';
+  if (text.match(/research|search|summarize|analyz/)) return 'research';
+  if (text.match(/data|sql|csv|analytics|statistic/)) return 'data';
+  if (text.match(/writ|copy|content|blog|draft/)) return 'writing';
+  return 'general';
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// AGENT DUE DILIGENCE — VERIS
+// ═══════════════════════════════════════════════════════════════════════
+
 const AGENT_SIGNALS = {
-  // Layer 1: Metadata (CROO store data)
   agent_listed:       { layer: 1, label: 'Agent listed on CROO store',    points: 10 },
   service_described:  { layer: 1, label: 'Service has clear description', points: 8  },
   price_set:          { layer: 1, label: 'Pricing is defined',            points: 5  },
   sla_set:            { layer: 1, label: 'SLA / delivery time defined',   points: 5  },
   category_tagged:    { layer: 1, label: 'Category/tags configured',      points: 4  },
   currently_online:   { layer: 1, label: 'Agent is currently online',     points: 8  },
-
-  // Layer 2: Web Intelligence (public web search)
   web_presence:       { layer: 2, label: 'Web presence / mentions found', points: 8  },
   creator_findable:   { layer: 2, label: 'Creator/developer identifiable',points: 7  },
   github_found:       { layer: 2, label: 'GitHub repository found',       points: 7  },
   media_mentioned:    { layer: 2, label: 'Referenced in public media',    points: 5  },
-
-  // Layer 3: Live Verification (requires endpoint or requester key)
   endpoint_reachable: { layer: 3, label: 'Endpoint reachable',            points: 10 },
   responds_to_prompts:{ layer: 3, label: 'Responds to test prompts',      points: 12 },
   response_quality:   { layer: 3, label: 'Response quality adequate',     points: 8  },
@@ -1519,7 +1518,6 @@ const AGENT_SIGNALS = {
   delivery_quality:   { layer: 3, label: 'Delivered output quality',      points: 8  },
 };
 
-// Signals CROO does NOT expose — shown as gaps in the report
 const CROO_ECOSYSTEM_GAPS = [
   'Order history unavailable (CROO does not expose)',
   'Delivery history unavailable (CROO does not expose)',
@@ -1539,7 +1537,6 @@ async function collectMetadata(agentInfo, crooConfig) {
   const notes = [];
   let agentData = null;
 
-  // Try CROO API
   try {
     const res = await fetch(
       `${process.env.CROO_API_URL}/agents/${agentInfo.agentId}`,
@@ -1559,7 +1556,6 @@ async function collectMetadata(agentInfo, crooConfig) {
     notes.push(`Store lookup failed: ${err.message}`);
   }
 
-  // Score metadata signals from store data
   if (agentData) {
     signals.service_described = !!(agentData.description && agentData.description.length > 30);
     signals.price_set = !!(agentData.price || agentData.services?.[0]?.price);
@@ -1571,7 +1567,6 @@ async function collectMetadata(agentInfo, crooConfig) {
     if (signals.currently_online) notes.push('Status: online');
     else notes.push('Status: offline or unknown');
   } else {
-    // Use provided info as fallback
     signals.service_described = !!(agentInfo.serviceDescription && agentInfo.serviceDescription.length > 30);
     signals.price_set = false;
     signals.sla_set = false;
@@ -1579,7 +1574,6 @@ async function collectMetadata(agentInfo, crooConfig) {
     signals.currently_online = false;
   }
 
-  // Compute layer 1 score
   let score = 0, maxScore = 0;
   for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
     if (cfg.layer !== 1) continue;
@@ -1670,7 +1664,6 @@ async function runLiveVerification(agentInfo, pack, requesterSdkKey) {
   const signals = {};
   const notes = [];
 
-  // Endpoint probe
   if (agentInfo.endpointUrl) {
     try {
       const res = await fetch(agentInfo.endpointUrl, {
@@ -1684,7 +1677,6 @@ async function runLiveVerification(agentInfo, pack, requesterSdkKey) {
       notes.push(`Endpoint unreachable: ${err.message}`);
     }
 
-    // HTTP prompt test (no SDK needed)
     if (signals.endpoint_reachable) {
       const testPrompt = pack.reliability[0];
       try {
@@ -1719,7 +1711,6 @@ async function runLiveVerification(agentInfo, pack, requesterSdkKey) {
     notes.push('No endpoint URL provided — HTTP tests skipped');
   }
 
-  // CROO economic order (only if requester key exists)
   if (requesterSdkKey && agentInfo.serviceId) {
     try {
       const agentClient = new AgentClient(crooConfig, requesterSdkKey);
@@ -1748,12 +1739,11 @@ async function runLiveVerification(agentInfo, pack, requesterSdkKey) {
   let score = 0, maxScore = 0;
   for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
     if (cfg.layer !== 3) continue;
-    // Only count signals where we actually attempted the test
     if (key === 'endpoint_reachable' || key === 'responds_to_prompts' || key === 'response_quality') {
-      if (!agentInfo.endpointUrl) continue; // skip if no endpoint
+      if (!agentInfo.endpointUrl) continue;
     }
     if (key === 'order_completed' || key === 'delivery_quality') {
-      if (!requesterSdkKey) continue; // skip if no requester key
+      if (!requesterSdkKey) continue;
     }
     maxScore += cfg.points;
     if (signals[key]) score += cfg.points;
@@ -1796,14 +1786,13 @@ function buildSignalCoverage(meta, web, live) {
   return { confirmed, unconfirmed, total, confirmedCount, coverage };
 }
 
-// ─── RECOMMENDATION — Evidence-aware ────────────────────────────────
+// ─── RECOMMENDATION ─────────────────────────────────────────────────
 
 function buildRecommendation(overallScore, coverage, layers) {
   const { meta, web, live } = layers;
   const hasLiveData = live.tested;
   const signalCoverage = coverage.coverage;
 
-  // Insufficient evidence threshold
   if (signalCoverage < 30 && !hasLiveData) {
     return {
       label: 'INSUFFICIENT EVIDENCE',
@@ -1827,15 +1816,12 @@ export async function runAgentAudit(agentInfo, requesterSdkKey, category = 'gene
 
   const pack = BENCHMARK_PACKS[category] || BENCHMARK_PACKS.general;
 
-  // Run all three layers
   const meta = await collectMetadata(agentInfo, crooConfig);
   const web = await collectWebIntelligence(agentInfo, meta, tavilyClientRef || tavilyClient);
   const live = await runLiveVerification(agentInfo, pack, requesterSdkKey);
 
-  // Signal coverage
   const coverage = buildSignalCoverage(meta, web, live);
 
-  // Overall score — weighted by what was actually tested
   const layerWeights = live.tested
     ? { meta: 0.30, web: 0.20, live: 0.50 }
     : web.coverage !== 'none'
@@ -1967,4 +1953,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
     return await runProjectDueDiligence(req);
   }
   throw new Error('Invalid type. Use "project" or "agent".');
-}
+    } 
