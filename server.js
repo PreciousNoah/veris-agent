@@ -91,11 +91,38 @@ app.get('/receipts', async (req, res) => {
 async function handleOrder(provider, orderId) {
   try {
     const order = await provider.getOrder(orderId);
-    const requirements = JSON.parse(order.requirement || '{}');
-    console.log('📋 Requirements:', requirements);
+    console.log('📋 Full order object:', JSON.stringify(order, null, 2));
+
+    // Try all possible field names CROO uses
+    const rawRequirement = order.requirement || order.requirements || 
+                           order.requirementText || order.input || 
+                           order.data || '';
+
+    console.log('📋 Raw requirement:', rawRequirement);
+
+    let requirements = {};
+    if (rawRequirement) {
+      try {
+        requirements = typeof rawRequirement === 'string' 
+          ? JSON.parse(rawRequirement) 
+          : rawRequirement;
+      } catch {
+        // If not JSON, treat as plain text project name
+        requirements = { type: 'project', name: rawRequirement };
+      }
+    }
+
+    console.log('📋 Parsed requirements:', requirements);
+
+    if (!requirements.type) {
+      console.warn('No type in requirements — defaulting to project');
+      requirements.type = 'project';
+      if (!requirements.name) {
+        requirements.name = rawRequirement || 'Unknown';
+      }
+    }
 
     const report = await runVERIS(requirements, REQUESTER_SDK_KEY);
-
     const delivery = await provider.deliverOrder(orderId, {
       deliverableType: DeliverableType.Text,
       deliverableText: report,
