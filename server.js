@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import pkg from '@croo-network/sdk';
 const { AgentClient, EventType, DeliverableType } = pkg;
-import { runVERIS } from './veris.js';
+import { runVERIS, getTrustReceipts, handleCompare, supabase } from './veris.js';
 import fs from 'fs';
 
 const app = express();
@@ -54,6 +54,37 @@ app.post('/audit', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Compare multiple agents
+app.post('/compare', async (req, res) => {
+  const { agents } = req.body;
+  if (!Array.isArray(agents) || agents.length < 2) {
+    return res.status(400).json({ error: 'Compare requires at least 2 agents' });
+  }
+  try {
+    const report = await handleCompare(agents, REQUESTER_SDK_KEY);
+    res.json({ report });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Receipt history for an entity
+app.get('/receipts/:entityId', async (req, res) => {
+  const receipts = await getTrustReceipts(req.params.entityId);
+  res.json({ entityId: req.params.entityId, receipts });
+});
+
+// Recent receipts feed
+app.get('/receipts', async (req, res) => {
+  if (!supabase) return res.json({ receipts: [] });
+  const { data } = await supabase
+    .from('trust_receipts')
+    .select('id, entity_type, entity_name, score, risk_level, signals_verified, signals_total, created_at')
+    .order('created_at', { ascending: false })
+    .limit(20);
+  res.json({ receipts: data || [] });
 });
 
 // CROO order handler
