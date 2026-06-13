@@ -1565,6 +1565,7 @@ function detectCategory(description = '', name = '') {
 
 // ═══════════════════════════════════════════════════════════════════════
 // AGENT DUE DILIGENCE — VERIS
+<<<<<<< HEAD
 // 
 // Philosophy: Due diligence works with whatever data is available.
 // Auditing requires data. We have limited data. We say so honestly.
@@ -2137,6 +2138,458 @@ export async function runVERIS(requirements, requesterSdkKey) {
     return report;
   }
 
+=======
+// ═══════════════════════════════════════════════════════════════════════
+
+const AGENT_SIGNALS = {
+  agent_listed:       { layer: 1, label: 'Agent listed on CROO store',    points: 10 },
+  service_described:  { layer: 1, label: 'Service has clear description', points: 8  },
+  price_set:          { layer: 1, label: 'Pricing is defined',            points: 5  },
+  sla_set:            { layer: 1, label: 'SLA / delivery time defined',   points: 5  },
+  category_tagged:    { layer: 1, label: 'Category/tags configured',      points: 4  },
+  currently_online:   { layer: 1, label: 'Agent is currently online',     points: 8  },
+  web_presence:       { layer: 2, label: 'Web presence / mentions found', points: 8  },
+  creator_findable:   { layer: 2, label: 'Creator/developer identifiable',points: 7  },
+  github_found:       { layer: 2, label: 'GitHub repository found',       points: 7  },
+  media_mentioned:    { layer: 2, label: 'Referenced in public media',    points: 5  },
+  endpoint_reachable: { layer: 3, label: 'Endpoint reachable',            points: 10 },
+  responds_to_prompts:{ layer: 3, label: 'Responds to test prompts',      points: 12 },
+  response_quality:   { layer: 3, label: 'Response quality adequate',     points: 8  },
+  order_completed:    { layer: 3, label: 'CROO order completed',          points: 15 },
+  delivery_quality:   { layer: 3, label: 'Delivered output quality',      points: 8  },
+};
+
+const CROO_ECOSYSTEM_GAPS = [
+  'Order history unavailable (CROO does not expose)',
+  'Delivery history unavailable (CROO does not expose)',
+  'Rating/review history unavailable (CROO does not expose)',
+  'Dispute history unavailable (CROO does not expose)',
+  'Refund history unavailable (CROO does not expose)',
+  'Success rate unavailable (CROO does not expose)',
+  'Counterparty feedback unavailable (CROO does not expose)',
+  'On-chain reputation score unavailable (future: VERIS can provide this)',
+];
+
+// ─── LAYER 1: METADATA DUE DILIGENCE ────────────────────────────────
+
+async function collectMetadata(agentInfo, crooConfig) {
+  console.log('  → Layer 1: Metadata due diligence...');
+  const signals = {};
+  const notes = [];
+  let agentData = null;
+
+  try {
+    const res = await fetch(
+      `${process.env.CROO_API_URL}/agents/${agentInfo.agentId}`,
+      { headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000) }
+    );
+    if (res.ok) {
+      agentData = await res.json();
+      signals.agent_listed = true;
+      signals.store_listed = true;
+      notes.push(`Store record found: ${agentData.name || agentInfo.agentId}`);
+    } else {
+      signals.agent_listed = false;
+      notes.push(`Store lookup returned ${res.status}`);
+    }
+  } catch (err) {
+    signals.agent_listed = false;
+    notes.push(`Store lookup failed: ${err.message}`);
+  }
+
+  if (agentData) {
+    signals.service_described = !!(agentData.description && agentData.description.length > 30);
+    signals.price_set = !!(agentData.price || agentData.services?.[0]?.price);
+    signals.sla_set = !!(agentData.slaMinutes || agentData.services?.[0]?.slaMinutes);
+    signals.category_tagged = !!(agentData.tags?.length || agentData.category);
+    signals.currently_online = agentData.status === 'online' || agentData.online === true;
+    if (signals.service_described) notes.push('Description: adequate');
+    if (!signals.service_described) notes.push('Description: missing or too short');
+    if (signals.currently_online) notes.push('Status: online');
+    else notes.push('Status: offline or unknown');
+  } else {
+    signals.service_described = !!(agentInfo.serviceDescription && agentInfo.serviceDescription.length > 30);
+    signals.price_set = false;
+    signals.sla_set = false;
+    signals.category_tagged = !!agentInfo.category;
+    signals.currently_online = false;
+  }
+
+  let score = 0, maxScore = 0;
+  for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
+    if (cfg.layer !== 1) continue;
+    maxScore += cfg.points;
+    if (signals[key]) score += cfg.points;
+  }
+
+  return {
+    score: maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
+    rawScore: score, maxScore,
+    signals,
+    agentData,
+    notes,
+    agentName: agentData?.name || agentInfo.agentName || agentInfo.agentId,
+    agentDescription: agentData?.description || agentInfo.serviceDescription || '',
+  };
+}
+
+// ─── LAYER 2: WEB INTELLIGENCE ──────────────────────────────────────
+
+async function collectWebIntelligence(agentInfo, meta, tavilyClientRef) {
+  console.log('  → Layer 2: Web intelligence...');
+  const signals = {};
+  const notes = [];
+  const agentName = meta.agentName;
+
+  if (!tavilyClientRef) {
+    notes.push('Web search not available');
+    return { score: 0, rawScore: 0, maxScore: 27, signals, notes, coverage: 'none' };
+  }
+
+  try {
+    const res = await tavilyClientRef.search(
+      `"${agentName}" CROO agent OR AI agent autonomous`,
+      { searchDepth: 'basic', maxResults: 5 }
+    );
+
+    if (res.results?.length > 0) {
+      const combined = res.results.map(r => (r.content || '') + ' ' + (r.title || '')).join(' ').toLowerCase();
+      signals.web_presence = true;
+      notes.push(`Web presence: ${res.results.length} results found`);
+
+      signals.creator_findable = combined.includes('developer') || combined.includes('built by') || combined.includes('created by') || combined.includes('team');
+      signals.github_found = res.results.some(r => r.url?.includes('github.com'));
+      signals.media_mentioned = res.results.some(r => {
+        const u = r.url?.toLowerCase() || '';
+        return u.includes('medium.com') || u.includes('mirror.xyz') || u.includes('coindesk') || u.includes('cointelegraph') || u.includes('decrypt');
+      });
+
+      if (signals.creator_findable) notes.push('Creator: identifiable from web');
+      if (signals.github_found) notes.push('GitHub: repository found');
+      if (signals.media_mentioned) notes.push('Media: mentioned in publications');
+    } else {
+      signals.web_presence = false;
+      signals.creator_findable = false;
+      signals.github_found = false;
+      signals.media_mentioned = false;
+      notes.push('Web presence: no results found');
+    }
+  } catch (err) {
+    notes.push(`Web search error: ${err.message}`);
+    signals.web_presence = false;
+    signals.creator_findable = false;
+    signals.github_found = false;
+    signals.media_mentioned = false;
+  }
+
+  let score = 0, maxScore = 0;
+  for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
+    if (cfg.layer !== 2) continue;
+    maxScore += cfg.points;
+    if (signals[key]) score += cfg.points;
+  }
+
+  return {
+    score: maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
+    rawScore: score, maxScore,
+    signals,
+    notes,
+    coverage: signals.web_presence ? 'partial' : 'none',
+  };
+}
+
+// ─── LAYER 3: LIVE VERIFICATION ─────────────────────────────────────
+
+async function runLiveVerification(agentInfo, pack, requesterSdkKey) {
+  console.log('  → Layer 3: Live verification...');
+  const signals = {};
+  const notes = [];
+
+  if (agentInfo.endpointUrl) {
+    try {
+      const res = await fetch(agentInfo.endpointUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(10000),
+      });
+      signals.endpoint_reachable = res.ok || res.status < 500;
+      notes.push(`Endpoint probe: HTTP ${res.status}`);
+    } catch (err) {
+      signals.endpoint_reachable = false;
+      notes.push(`Endpoint unreachable: ${err.message}`);
+    }
+
+    if (signals.endpoint_reachable) {
+      const testPrompt = pack.reliability[0];
+      try {
+        const res = await fetch(agentInfo.endpointUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: testPrompt, task: testPrompt, topic: testPrompt }),
+          signal: AbortSignal.timeout(30000),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const text = data.report || data.response || data.result || data.answer || data.text || JSON.stringify(data);
+          if (text && text.length > 50) {
+            signals.responds_to_prompts = true;
+            const scored = await semanticScore(testPrompt, text, pack.competence[0].concept, 10);
+            signals.response_quality = scored.score >= 5;
+            notes.push(`HTTP prompt test: score ${scored.score}/10 — ${scored.explanation}`);
+          } else {
+            signals.responds_to_prompts = false;
+            notes.push('HTTP prompt: response too short or empty');
+          }
+        } else {
+          signals.responds_to_prompts = false;
+          notes.push(`HTTP prompt: ${res.status}`);
+        }
+      } catch (err) {
+        signals.responds_to_prompts = false;
+        notes.push(`HTTP prompt failed: ${err.message}`);
+      }
+    }
+  } else {
+    notes.push('No endpoint URL provided — HTTP tests skipped');
+  }
+
+  if (requesterSdkKey && agentInfo.serviceId) {
+    try {
+      const agentClient = new AgentClient(crooConfig, requesterSdkKey);
+      const result = await placeTestOrder(agentClient, agentInfo.serviceId, pack.reliability[0], 90000);
+      const completed = result.response && !result.timedOut && !result.rejected;
+      signals.order_completed = completed;
+
+      if (completed) {
+        const scored = await semanticScore(pack.reliability[0], result.response, pack.competence[0].concept, 10);
+        signals.delivery_quality = scored.score >= 5;
+        notes.push(`CROO order: completed in ${Math.round(result.responseTime / 1000)}s, quality ${scored.score}/10`);
+      } else {
+        signals.delivery_quality = false;
+        notes.push(`CROO order: ${result.timedOut ? 'timed out' : result.rejected ? 'rejected' : result.error || 'failed'}`);
+      }
+    } catch (err) {
+      signals.order_completed = false;
+      signals.delivery_quality = false;
+      notes.push(`CROO order error: ${err.message}`);
+    }
+  } else {
+    notes.push('No requester SDK key — CROO order test skipped');
+  }
+
+  const hasAnyLiveData = signals.endpoint_reachable !== undefined || signals.order_completed !== undefined;
+  let score = 0, maxScore = 0;
+  for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
+    if (cfg.layer !== 3) continue;
+    if (key === 'endpoint_reachable' || key === 'responds_to_prompts' || key === 'response_quality') {
+      if (!agentInfo.endpointUrl) continue;
+    }
+    if (key === 'order_completed' || key === 'delivery_quality') {
+      if (!requesterSdkKey) continue;
+    }
+    maxScore += cfg.points;
+    if (signals[key]) score += cfg.points;
+  }
+
+  return {
+    score: maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
+    rawScore: score, maxScore,
+    signals,
+    notes,
+    tested: hasAnyLiveData,
+    endpointTested: !!agentInfo.endpointUrl,
+    crooOrderTested: !!requesterSdkKey,
+  };
+}
+
+// ─── SIGNAL COVERAGE SUMMARY ────────────────────────────────────────
+
+function buildSignalCoverage(meta, web, live) {
+  const allSignals = Object.entries(AGENT_SIGNALS);
+  const confirmed = [];
+  const unconfirmed = [];
+
+  const allResults = { ...meta.signals, ...web.signals, ...live.signals };
+
+  for (const [key, cfg] of allSignals) {
+    if (allResults[key] === true) {
+      confirmed.push(`✓ ${cfg.label}`);
+    } else if (allResults[key] === false) {
+      unconfirmed.push(`✗ ${cfg.label}`);
+    } else {
+      unconfirmed.push(`~ ${cfg.label} (not tested)`);
+    }
+  }
+
+  const total = allSignals.length;
+  const confirmedCount = confirmed.length;
+  const coverage = Math.round((confirmedCount / total) * 100);
+
+  return { confirmed, unconfirmed, total, confirmedCount, coverage };
+}
+
+// ─── RECOMMENDATION ─────────────────────────────────────────────────
+
+function buildRecommendation(overallScore, coverage, layers) {
+  const { meta, web, live } = layers;
+  const hasLiveData = live.tested;
+  const signalCoverage = coverage.coverage;
+
+  if (signalCoverage < 30 && !hasLiveData) {
+    return {
+      label: 'INSUFFICIENT EVIDENCE',
+      symbol: '?',
+      text: `Only ${coverage.confirmedCount}/${coverage.total} signals verifiable. Cannot make a confident trust assessment. Provide endpoint URL or enable economic verification for a more complete picture.`,
+      color: 'gray',
+    };
+  }
+
+  if (overallScore >= 80) return { label: 'SUITABLE FOR PRODUCTION', symbol: '✓', text: 'Strong signals across multiple verification layers. Proceed with standard commercial due diligence.', color: 'green' };
+  if (overallScore >= 65) return { label: 'GENERALLY SUITABLE', symbol: '~✓', text: 'Adequate signals present. Independent verification recommended before high-value use.', color: 'yellow' };
+  if (overallScore >= 45) return { label: 'PROCEED WITH CAUTION', symbol: '⚠', text: 'Mixed or limited signals. Use for low-stakes tasks only. Monitor closely.', color: 'orange' };
+  if (signalCoverage < 40) return { label: 'INSUFFICIENT EVIDENCE', symbol: '?', text: `Limited verifiable data (${coverage.confirmedCount}/${coverage.total} signals). This may reflect ecosystem limitations, not agent failure.`, color: 'gray' };
+  return { label: 'HIGH RISK', symbol: '✗', text: 'Significant gaps or failed verifications detected. Additional verification strongly recommended.', color: 'red' };
+}
+
+// ─── MAIN AGENT DUE DILIGENCE ENTRY POINT ───────────────────────────
+
+export async function runAgentAudit(agentInfo, requesterSdkKey, category = 'general', mode = 'full', tavilyClientRef = null) {
+  console.log(`\n🔍 VERIS Agent Due Diligence: ${agentInfo.agentId} | Category: ${category}`);
+
+  const pack = BENCHMARK_PACKS[category] || BENCHMARK_PACKS.general;
+
+  const meta = await collectMetadata(agentInfo, crooConfig);
+  const web = await collectWebIntelligence(agentInfo, meta, tavilyClientRef || tavilyClient);
+  const live = await runLiveVerification(agentInfo, pack, requesterSdkKey);
+
+  const coverage = buildSignalCoverage(meta, web, live);
+
+  const layerWeights = live.tested
+    ? { meta: 0.30, web: 0.20, live: 0.50 }
+    : web.coverage !== 'none'
+    ? { meta: 0.55, web: 0.45, live: 0 }
+    : { meta: 1.0, web: 0, live: 0 };
+
+  const overallScore = Math.round(
+    meta.score * layerWeights.meta +
+    web.score * layerWeights.web +
+    live.score * layerWeights.live
+  );
+
+  const confidence = live.tested ? 'High' : web.coverage !== 'none' ? 'Medium' : 'Low';
+  const rec = buildRecommendation(overallScore, coverage, { meta, web, live });
+
+  function pb(s) { return progressBar(s); }
+
+  return `VERIS AGENT DUE DILIGENCE REPORT
+═══════════════════════════════════════════════
+Agent ID:     ${agentInfo.agentId}
+Service ID:   ${agentInfo.serviceId || 'Not provided'}
+Agent Name:   ${meta.agentName}
+Category:     ${pack.label}
+Audited:      ${new Date().toUTCString()}
+Audited by:   VERIS — Trust Infrastructure for the Agent Economy
+Protocol:     CROO v1 · Base Network
+
+NOTE: This is agent due diligence, not verification.
+VERIS investigates all publicly available evidence and reports
+signal coverage honestly. Low scores may reflect ecosystem
+limitations, not agent failure.
+═══════════════════════════════════════════════
+OVERALL SCORE:    ${overallScore}/100  ${pb(overallScore)}
+CONFIDENCE:       ${confidence}
+SIGNAL COVERAGE:  ${coverage.confirmedCount}/${coverage.total} signals verifiable (${coverage.coverage}%)
+═══════════════════════════════════════════════
+LAYER 1 — METADATA          ${meta.score}/100  ${pb(meta.score)}
+(Source: CROO Agent Store)
+${meta.signals.agent_listed ? '  ✓ Agent listed on CROO store' : '  ✗ Agent not found on CROO store'}
+${meta.signals.service_described ? '  ✓ Service has clear description' : '  ✗ Description missing or inadequate'}
+${meta.signals.price_set ? '  ✓ Pricing defined' : '  ✗ Pricing not set'}
+${meta.signals.sla_set ? '  ✓ SLA / delivery time defined' : '  ✗ SLA not configured'}
+${meta.signals.category_tagged ? '  ✓ Category/tags configured' : '  ~ Category not specified'}
+${meta.signals.currently_online ? '  ✓ Agent currently online' : '  ✗ Agent offline or status unknown'}
+${meta.notes.map(n => `  • ${n}`).join('\n')}
+
+LAYER 2 — WEB INTELLIGENCE  ${web.score}/100  ${pb(web.score)}
+(Source: Public web search)
+${web.signals.web_presence ? '  ✓ Web presence / mentions found' : '  ✗ No web presence detected'}
+${web.signals.creator_findable ? '  ✓ Creator/developer identifiable' : '  ~ Creator not publicly identifiable'}
+${web.signals.github_found ? '  ✓ GitHub repository found' : '  ~ No GitHub found'}
+${web.signals.media_mentioned ? '  ✓ Referenced in public media' : '  ~ No media coverage found'}
+${web.notes.map(n => `  • ${n}`).join('\n')}
+
+LAYER 3 — LIVE VERIFICATION ${live.tested ? `${live.score}/100  ${pb(live.score)}` : 'NOT TESTED'}
+(Source: Direct agent interaction)
+${agentInfo.endpointUrl
+  ? `${live.signals.endpoint_reachable ? '  ✓ Endpoint reachable' : '  ✗ Endpoint unreachable'}
+${live.signals.responds_to_prompts ? '  ✓ Responds to test prompts' : '  ✗ Did not respond to prompts'}
+${live.signals.response_quality ? '  ✓ Response quality adequate' : live.signals.responds_to_prompts === false ? '  ✗ Response quality inadequate' : '  ~ Response quality not tested'}`
+  : '  ~ No endpoint URL provided — HTTP tests skipped'}
+${requesterSdkKey
+  ? `${live.signals.order_completed ? '  ✓ CROO order completed' : '  ✗ CROO order not completed'}
+${live.signals.delivery_quality ? '  ✓ Delivered output quality adequate' : '  ✗ Delivery quality inadequate'}`
+  : '  ~ No requester SDK key — CROO order test skipped'}
+${live.notes.map(n => `  • ${n}`).join('\n')}
+═══════════════════════════════════════════════
+VERIFIABLE SIGNAL COVERAGE  (${coverage.confirmedCount}/${coverage.total} signals)
+
+CONFIRMED
+${coverage.confirmed.length > 0 ? coverage.confirmed.map(s => `  ${s}`).join('\n') : '  (None confirmed)'}
+
+NOT CONFIRMED / NOT TESTED
+${coverage.unconfirmed.map(s => `  ${s}`).join('\n')}
+
+ECOSYSTEM DATA GAPS  (CROO does not expose these)
+${CROO_ECOSYSTEM_GAPS.map(g => `  ✗ ${g}`).join('\n')}
+═══════════════════════════════════════════════
+RECOMMENDATION:  ${rec.symbol} ${rec.label}
+${rec.text}
+═══════════════════════════════════════════════
+SCORING WEIGHTS
+${live.tested
+  ? '  Metadata × 0.30 + Web Intelligence × 0.20 + Live Verification × 0.50'
+  : web.coverage !== 'none'
+  ? '  Metadata × 0.55 + Web Intelligence × 0.45 (Live verification not performed)'
+  : '  Metadata × 1.00 (Web and live verification not performed)'}
+
+HOW TO IMPROVE THIS SCORE
+  1. Provide endpoint URL → enables HTTP prompt testing
+  2. Configure CROO_REQUESTER_SDK_KEY → enables live order verification
+  3. Build public web presence → improves web intelligence layer
+  4. Ensure agent is online → improves metadata score
+
+ABOUT THIS REPORT
+VERIS performs agent due diligence using all publicly available signals.
+The CROO ecosystem currently does not expose order history, ratings, or
+delivery statistics. This is an ecosystem limitation, not an agent failure.
+As CROO matures, VERIS can become the reputation infrastructure that
+creates these trust signals from verified order outcomes.
+
+AUDIT TRAIL
+  Auditor: VERIS · CROO v1 · Base Mainnet
+  Category: ${category} | Layers tested: ${[meta.score > 0 ? 'Metadata' : null, web.coverage !== 'none' ? 'Web' : null, live.tested ? 'Live' : null].filter(Boolean).join(', ') || 'Metadata only'}
+  Timestamp: ${new Date().toISOString()}`;
+}
+
+export async function runVERIS(requirements, requesterSdkKey) {
+  const req = typeof requirements === 'string' ? JSON.parse(requirements) : requirements;
+  if (req.type === 'agent') {
+    if (!req.agentId) throw new Error('Agent due diligence requires: agentId');
+    return await runAgentAudit(
+      {
+        agentId: req.agentId,
+        serviceId: req.serviceId || null,
+        endpointUrl: req.endpointUrl || null,
+        agentName: req.agentName || null,
+        serviceDescription: req.serviceDescription || null,
+        category: req.category || null,
+      },
+      requesterSdkKey,
+      req.category || detectCategory(req.serviceDescription || '', req.agentName || ''),
+      req.mode || 'full',
+      null
+    );
+  }
+>>>>>>> ac64fa0f976c2df6700619b37137b6fad0c73c6a
   if (req.type === 'project') {
     if (!req.name) throw new Error('Project due diligence requires: name');
     report = await runProjectDueDiligence(req);
@@ -2147,4 +2600,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
   }
 
   throw new Error('Invalid type. Use "project" or "agent".');
-}
+    } 
