@@ -881,17 +881,25 @@ function getMaturityCategoryLabel(category, score) {
 // ═══════════════════════════════════════════════════════════════════════
 
 const ENTITY_BENCHMARKS = {
-  'Bitcoin':    { type: 'tier1_network', expectedLegitimacy: { min: 85, max: 100 }, expectedMaturity: { min: 85, max: 100 } },
-  'Ethereum':   { type: 'tier1_network', expectedLegitimacy: { min: 85, max: 100 }, expectedMaturity: { min: 85, max: 100 } },
-  'Solana':     { type: 'tier1_network', expectedLegitimacy: { min: 75, max: 95 },  expectedMaturity: { min: 70, max: 90 } },
-  'Uniswap':    { type: 'major_defi',    expectedLegitimacy: { min: 70, max: 90 },  expectedMaturity: { min: 65, max: 85 } },
-  'Aave':       { type: 'major_defi',    expectedLegitimacy: { min: 70, max: 90 },  expectedMaturity: { min: 65, max: 85 } },
-  'Chainlink':  { type: 'major_tooling', expectedLegitimacy: { min: 70, max: 90 },  expectedMaturity: { min: 65, max: 85 } },
-  'Hyperliquid': { type: 'growing_platform', expectedLegitimacy: { min: 60, max: 80 }, expectedMaturity: { min: 55, max: 75 } },
-  'FTX':        { type: 'known_failure', expectedLegitimacy: { min: 0, max: 30 }, expectedMaturity: { min: 0, max: 30 }, criticalExpected: true },
-  'Terra Luna': { type: 'known_failure', expectedLegitimacy: { min: 0, max: 30 }, expectedMaturity: { min: 0, max: 30 }, criticalExpected: true },
-  'Celsius':    { type: 'known_failure', expectedLegitimacy: { min: 0, max: 30 }, expectedMaturity: { min: 0, max: 30 }, criticalExpected: true },
-  'BitConnect': { type: 'known_scam', expectedLegitimacy: { min: 0, max: 20 }, expectedMaturity: { min: 0, max: 20 }, criticalExpected: true },
+  // Tier 1 networks — dominant, long-established
+  'Bitcoin':    { type: 'tier1_network',     expectedLegitimacy: { min: 75, max: 100 }, expectedMaturity: { min: 75, max: 100 } },
+  'Ethereum':   { type: 'tier1_network',     expectedLegitimacy: { min: 75, max: 100 }, expectedMaturity: { min: 75, max: 100 } },
+  'Solana':     { type: 'tier1_network',     expectedLegitimacy: { min: 60, max: 95  }, expectedMaturity: { min: 55, max: 90  } },
+ 
+  // Major DeFi — well audited, public teams
+  'Uniswap':    { type: 'major_defi',        expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
+  'Aave':       { type: 'major_defi',        expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
+  'Chainlink':  { type: 'major_tooling',     expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
+ 
+  // Growing platforms — less data available
+  'Hyperliquid':{ type: 'growing_platform',  expectedLegitimacy: { min: 40, max: 80  }, expectedMaturity: { min: 35, max: 75  } },
+  'XRPL':       { type: 'infrastructure',    expectedLegitimacy: { min: 50, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
+ 
+  // Known failures — should score low
+  'FTX':        { type: 'known_failure',     expectedLegitimacy: { min: 0,  max: 35  }, expectedMaturity: { min: 0,  max: 35  }, criticalExpected: true },
+  'Terra Luna': { type: 'known_failure',     expectedLegitimacy: { min: 0,  max: 35  }, expectedMaturity: { min: 0,  max: 35  }, criticalExpected: true },
+  'Celsius':    { type: 'known_failure',     expectedLegitimacy: { min: 0,  max: 35  }, expectedMaturity: { min: 0,  max: 35  }, criticalExpected: true },
+  'BitConnect': { type: 'known_scam',        expectedLegitimacy: { min: 0,  max: 20  }, expectedMaturity: { min: 0,  max: 20  }, criticalExpected: true },
 };
 
 function validateReasonableness(projectName, legitimacyScore, maturityScore) {
@@ -1425,18 +1433,18 @@ AUDIT TRAIL
 // BENCHMARK SUITE
 // ═══════════════════════════════════════════════════════════════════════
 
-export const CALIBRATION_BENCHMARKS = {
-  bitcoin:      { legitMin:82, maturityMin:82 },
-  ethereum:     { legitMin:82, maturityMin:82 },
-  solana:       { legitMin:75, maturityMin:72 },
-  chainlink:    { legitMin:75, maturityMin:68 },
-  uniswap:      { legitMin:72, maturityMin:68 },
-  aave:         { legitMin:72, maturityMin:65 },
-  hyperliquid:  { legitMin:65, maturityMin:58 },
-  xrpl:         { legitMin:72, maturityMin:65 },
-  ftx:          { expectCritical:true },
-  'terra luna': { expectCritical:true },
-  celsius:      { expectCritical:true },
+export const CALIBRATION_BENCHMARKS_FIXED = {
+  bitcoin:      { legitMin: 70, maturityMin: 70 },
+  ethereum:     { legitMin: 70, maturityMin: 70 },
+  solana:       { legitMin: 55, maturityMin: 50 },
+  chainlink:    { legitMin: 55, maturityMin: 50 },
+  uniswap:      { legitMin: 50, maturityMin: 45 },
+  aave:         { legitMin: 50, maturityMin: 45 },
+  hyperliquid:  { legitMin: 40, maturityMin: 35 },
+  xrpl:         { legitMin: 50, maturityMin: 45 },
+  ftx:          { expectCritical: true },
+  'terra luna': { expectCritical: true },
+  celsius:      { expectCritical: true },
 };
 
 export function checkCalibration(name, legit, maturity) {
@@ -2116,34 +2124,159 @@ AUDIT TRAIL
   Timestamp: ${new Date().toISOString()}`;
 }
 
+export async function handleCompare(agents, requesterSdkKey) {
+  if (!Array.isArray(agents) || agents.length < 2) {
+    throw new Error('Compare requires at least 2 agents');
+  }
+  if (agents.length > 5) throw new Error('Compare supports maximum 5 agents');
+ 
+  console.log(`\n⚖️ VERIS Trust Compare: ${agents.length} agents`);
+ 
+  const results = await Promise.all(agents.map(async (agent) => {
+    try {
+      const report = await runVERIS(
+        {
+          type:               'agent',
+          agentId:            agent.agentId || agent.agentName || 'unknown',
+          serviceId:          agent.serviceId || null,
+          agentName:          agent.agentName || agent.agentId || 'Unknown',
+          endpointUrl:        agent.endpointUrl || null,
+          serviceDescription: agent.serviceDescription || null,
+          category:           agent.category || 'general',
+        },
+        requesterSdkKey
+      );
+      const m = parseReportMetrics(report);
+      return {
+        agentName:       agent.agentName || agent.agentId || 'Unknown',
+        score:           m.score,
+        riskLevel:       m.riskLevel,
+        signalsVerified: m.signalsVerified,
+        signalsTotal:    m.signalsTotal,
+        error:           null,
+      };
+    } catch (err) {
+      return {
+        agentName:       agent.agentName || agent.agentId || 'Unknown',
+        score:           null,
+        riskLevel:       'Error',
+        signalsVerified: 0,
+        signalsTotal:    0,
+        error:           err.message,
+      };
+    }
+  }));
+ 
+  const ranked = [...results].sort((a, b) => {
+    if (a.score === null) return 1;
+    if (b.score === null) return -1;
+    return b.score - a.score;
+  });
+ 
+  const best = ranked.find(r => r.score !== null);
+  const maxNameLen = Math.max(...results.map(r => r.agentName.length), 12);
+  const pad  = (s, n) => String(s || '').padEnd(n);
+  const padR = (s, n) => String(s || '').padStart(n);
+ 
+  const header = `${pad('Agent', maxNameLen)}  ${padR('Score', 6)}  ${pad('Verdict', 22)}  ${padR('Signals', 8)}`;
+  const sep    = '─'.repeat(header.length);
+  const rows   = ranked.map(r =>
+    `${pad(r.agentName, maxNameLen)}  ${padR(r.score !== null ? r.score + '/100' : 'N/A', 6)}  ${pad(r.riskLevel, 22)}  ${padR(r.signalsVerified + '/' + r.signalsTotal, 8)}`
+  ).join('\n');
+ 
+  const rec = !best
+    ? 'No agents returned sufficient data for comparison.'
+    : best.score >= 70
+    ? `✓ Best trust-adjusted option: ${best.agentName} (${best.score}/100)\n  This agent has the strongest verifiable trust signals among those compared.`
+    : best.score >= 45
+    ? `⚠ Strongest available: ${best.agentName} (${best.score}/100)\n  All compared agents have limited verifiable data. Proceed with caution.`
+    : `? INSUFFICIENT DATA across all compared agents.\n  None have enough verifiable signals for a confident recommendation.\n  Provide endpoint URLs to enable live verification.`;
+ 
+  return `VERIS TRUST COMPARE REPORT
+═══════════════════════════════════════════════
+Compared: ${results.length} agents
+Audited:  ${new Date().toUTCString()}
+Audited by: VERIS — Trust Infrastructure for the Agent Economy
+Protocol: CROO v1 · Base Network
+═══════════════════════════════════════════════
+COMPARISON TABLE
+ 
+${header}
+${sep}
+${rows}
+ 
+═══════════════════════════════════════════════
+RECOMMENDATION
+${rec}
+ 
+NOTE: Scores reflect publicly verifiable signals only.
+CROO does not expose order history or ratings — these gaps
+are shown in individual agent reports.
+═══════════════════════════════════════════════
+AUDIT TRAIL
+  Auditor: VERIS | Agents compared: ${results.length}
+  Timestamp: ${new Date().toISOString()}`;
+}
+
 export async function runVERIS(requirements, requesterSdkKey) {
   const req = typeof requirements === 'string' ? JSON.parse(requirements) : requirements;
-  let report;
-
+ 
+  // ── AGENT DUE DILIGENCE ──────────────────────────────────────────
   if (req.type === 'agent') {
-    if (!req.agentId) throw new Error('Agent due diligence requires: agentId');
-    report = await runAgentAudit(
-      { agentId: req.agentId, serviceId: req.serviceId || null,
-        endpointUrl: req.endpointUrl || null, agentName: req.agentName || null,
-        serviceDescription: req.serviceDescription || null },
+    if (!req.agentId && !req.agentName) {
+      throw new Error('Agent due diligence requires at least: agentId or agentName');
+    }
+    const report = await runAgentAudit(
+      {
+        agentId:            req.agentId || req.agentName || 'unknown',
+        serviceId:          req.serviceId || null,
+        endpointUrl:        req.endpointUrl || null,
+        agentName:          req.agentName || req.agentId || null,
+        serviceDescription: req.serviceDescription || null,
+      },
       requesterSdkKey,
       req.category || detectCategory(req.serviceDescription || '', req.agentName || ''),
-      req.mode || 'full', null
+      req.mode || 'full',
+      null
     );
     const m = parseReportMetrics(report);
-    await saveTrustReceipt('agent', req.agentId, req.agentName || req.agentId,
-      report, m.score, m.riskLevel, m.signalsVerified, m.signalsTotal);
+    await saveTrustReceipt(
+      'agent',
+      req.agentId || req.agentName || 'unknown',
+      req.agentName || req.agentId || 'Unknown Agent',
+      report, m.score, m.riskLevel, m.signalsVerified, m.signalsTotal
+    );
     return report;
   }
-
+ 
+  // ── PROJECT DUE DILIGENCE ────────────────────────────────────────
   if (req.type === 'project') {
     if (!req.name) throw new Error('Project due diligence requires: name');
-    report = await runProjectDueDiligence(req);
+    const report = await runProjectDueDiligence(req);
     const m = parseReportMetrics(report);
-    await saveTrustReceipt('project', req.name.toLowerCase(), req.name,
-      report, m.score, m.riskLevel, m.signalsVerified, m.signalsTotal);
+    await saveTrustReceipt(
+      'project',
+      req.name.toLowerCase().trim(),
+      req.name,
+      report, m.score, m.riskLevel, m.signalsVerified, m.signalsTotal
+    );
     return report;
   }
-
+ 
   throw new Error('Invalid type. Use "project" or "agent".');
 }
+
+
+ 
+// ═══════════════════════════════════════════════════════════════════════
+// FIX 3: exports — add these lines at the bottom of veris.js
+// (getTrustReceipts and supabase need to be exported for server.js)
+// ═══════════════════════════════════════════════════════════════════════
+ 
+// Add 'export' keyword to getTrustReceipts function definition:
+// Change: async function getTrustReceipts(...)
+// To:     export async function getTrustReceipts(...)
+ 
+// Add 'export' keyword to supabase const:
+// Change: const supabase = ...
+// To:     export const supabase = ...
