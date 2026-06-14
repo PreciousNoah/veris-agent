@@ -17,7 +17,7 @@ const config = {
   logger: { debug:()=>{}, info:console.log, warn:console.warn, error:console.error },
 };
 
-const RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://veris-agent.onrender.com';
+const RAILWAY_URL = process.env.RAILWAY_EXTERNAL_URL || 'https://veris-agent-production.up.railway.app';
 
 let credentials = {};
 try {
@@ -197,7 +197,7 @@ async function startProvider(sdkKey, label) {
 
 // ─── KEEP-ALIVE ──────────────────────────────────────────────────────
 setInterval(async () => {
-  try { await fetch(RENDER_URL); console.log('✅ Keep-alive ping'); }
+  try { await fetch(RAILWAY_URL); console.log('✅ Keep-alive ping'); }
   catch (e) { console.log('Keep-alive failed:', e.message); }
 }, 14 * 60 * 1000);
 

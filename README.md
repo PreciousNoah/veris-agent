@@ -73,7 +73,7 @@ TAVILY_API_KEY=your_tavily_key
 GROQ_API_KEY=your_groq_key
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_KEY=your_supabase_anon_key
-RENDER_EXTERNAL_URL=https://veris-agent.onrender.com
+RAILWAY_EXTERNAL_URL=https://veris-agent-production.up.railway.app
 ```
 
 ---
