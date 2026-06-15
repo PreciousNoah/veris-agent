@@ -3,6 +3,7 @@ import { tavily } from '@tavily/core';
 import pkg from '@croo-network/sdk';
 const { AgentClient, EventType } = pkg;
 import { createClient } from '@supabase/supabase-js';
+import { lookupGroundTruth, applyGroundTruthOverrides, formatIncidentsBlock } from './ground_truth.js';
 
 // FIX 3: export supabase at definition
 export const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_KEY
@@ -1126,16 +1127,25 @@ export async function runProjectDueDiligence(project) {
   const legit   = computeLegitimacyScore(evidence, template, project.name);
   const mat     = computeCleanMaturityScore(evidence);
   const opRisk  = checkOperationalRisk(evidence);
+  // Apply ground truth overrides BEFORE finalising scores
+  const gtResult = (!hardEvents.length && !insufficientEvidence)
+    ? applyGroundTruthOverrides(project.name, legit.legitimacyScore, mat.maturityScore, evidence)
+    : { legitimacyScore: legit.legitimacyScore, maturityScore: mat.maturityScore, incidents: [], overridden: false, forceRiskLevel: null };
   const legitimacyScore = hardEvents.length > 0 ? 0
     : insufficientEvidence ? 'N/A'
-    : legit.legitimacyScore;
-  const maturityScore   = hardEvents.length > 0 ? 0
+    : gtResult.legitimacyScore;
+  const maturityScore = hardEvents.length > 0 ? 0
     : insufficientEvidence ? 'N/A'
-    : mat.maturityScore;
+    : gtResult.maturityScore;
+  const knownIncidents = gtResult.incidents || [];
+  const incidentsBlock = formatIncidentsBlock(knownIncidents);
   const confidence = computeConfidence(evidence, allSources);
   const rec = insufficientEvidence
     ? { label: 'INSUFFICIENT DATA', symbol: '?', band: 'N/A',
         text: `Cannot score — all ${evidence._missing_mandatory?.length || ''} mandatory signals for ${template.label} are UNKNOWN. More evidence required.` }
+    : gtResult.forceRiskLevel === 'CRITICAL'
+    ? { label: 'CRITICAL RISK', symbol: '⛔', band: '0-29',
+        text: `Ground truth confirms this entity has a catastrophic failure history. Do not engage. See incidents below.` }
     : getRecommendation(legitimacyScore, maturityScore, opRisk.level, hardEvents);
   const reasonableness = insufficientEvidence
     ? { reasonable: true, note: 'Skipped — insufficient evidence' }
@@ -1249,6 +1259,7 @@ OP. RISK:     ${opRisk.level}
 ${hardWarn}${insufficientWarn}${lowConfWarn}${anomalyWarn}${reasonablenessWarn}
 RECOMMENDATION:  ${rec.symbol} ${rec.label}  [Band: ${rec.band}]
 ${rec.text}
+${incidentsBlock}${gtResult.overridden ? `\n📚 GROUND TRUTH APPLIED: Scores adjusted based on verified reference data for ${project.name}. Raw engine scores: Legitimacy ${legit.legitimacyScore}, Maturity ${mat.maturityScore}.` : ''}
 ══════════════════════════════════════════════
 EVIDENCE SOURCES  (#6)
   Official (T1): ${srcBreakdown.tier1} sources
@@ -1943,7 +1954,7 @@ AUDIT TRAIL
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// FIX 1: runVERIS — agent type never falls through to project pipeline
+// MAIN ENTRY POINT
 // ═══════════════════════════════════════════════════════════════════════
 export async function runVERIS(requirements, requesterSdkKey) {
   const req = typeof requirements === 'string' ? JSON.parse(requirements) : requirements;
