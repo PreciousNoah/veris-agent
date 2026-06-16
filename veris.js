@@ -87,6 +87,7 @@ const crooConfig = {
 // by weak extraction.
 // ═══════════════════════════════════════════════════════════════════════
 const ENTITY_GROUND_TRUTH = {
+  // ── Known good — established protocols ───────────────────────────
   'Bitcoin': {
     open_source: { value: 'YES', urls: ['https://github.com/bitcoin/bitcoin'], confidence: 100 },
     active_github: { value: 'YES', urls: ['https://github.com/bitcoin/bitcoin'], confidence: 100 },
@@ -136,9 +137,11 @@ const ENTITY_GROUND_TRUTH = {
   'Uniswap': {
     open_source: { value: 'YES', urls: ['https://github.com/Uniswap'], confidence: 100 },
     active_github: { value: 'YES', urls: ['https://github.com/Uniswap'], confidence: 100 },
+    multiple_contributors: { value: 'YES', urls: ['https://github.com/Uniswap'], confidence: 100 },
     live_product: { value: 'YES', urls: ['https://app.uniswap.org'], confidence: 100 },
     clear_use_case: { value: 'YES', urls: ['https://uniswap.org'], confidence: 100 },
     technical_docs: { value: 'YES', urls: ['https://docs.uniswap.org'], confidence: 100 },
+    audit_found: { value: 'YES', urls: ['https://github.com/Uniswap/v3-core/tree/main/audits'], confidence: 95 },
     founded_year: 2018,
     ecosystem_level: 'major',
     adoption_level: 'large',
@@ -146,10 +149,71 @@ const ENTITY_GROUND_TRUTH = {
   'Aave': {
     open_source: { value: 'YES', urls: ['https://github.com/aave'], confidence: 100 },
     active_github: { value: 'YES', urls: ['https://github.com/aave'], confidence: 100 },
+    multiple_contributors: { value: 'YES', urls: ['https://github.com/aave'], confidence: 100 },
     live_product: { value: 'YES', urls: ['https://app.aave.com'], confidence: 100 },
-    audit_found: { value: 'YES', urls: ['https://github.com/aave/aave-v3-core'], confidence: 95 },
+    audit_found: { value: 'YES', urls: ['https://github.com/aave/aave-v3-core/tree/master/audits'], confidence: 100 },
     technical_docs: { value: 'YES', urls: ['https://docs.aave.com'], confidence: 100 },
+    bug_bounty: { value: 'YES', urls: ['https://immunefi.com/bounty/aave/'], confidence: 95 },
+    on_chain_governance: { value: 'YES', urls: ['https://governance.aave.com'], confidence: 100 },
     founded_year: 2017,
+    ecosystem_level: 'major',
+    adoption_level: 'large',
+  },
+  'MakerDAO': {
+    open_source: { value: 'YES', urls: ['https://github.com/makerdao'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/makerdao'], confidence: 100 },
+    multiple_contributors: { value: 'YES', urls: ['https://github.com/makerdao'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://makerdao.com'], confidence: 100 },
+    audit_found: { value: 'YES', urls: ['https://github.com/makerdao/mcd-security'], confidence: 100 },
+    technical_docs: { value: 'YES', urls: ['https://docs.makerdao.com'], confidence: 100 },
+    on_chain_governance: { value: 'YES', urls: ['https://vote.makerdao.com'], confidence: 100 },
+    treasury_transparency: { value: 'YES', urls: ['https://makerburn.com'], confidence: 95 },
+    whitepaper: { value: 'YES', urls: ['https://makerdao.com/en/whitepaper'], confidence: 100 },
+    founded_year: 2014,
+    ecosystem_level: 'major',
+    adoption_level: 'large',
+  },
+  'Compound': {
+    open_source: { value: 'YES', urls: ['https://github.com/compound-finance'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/compound-finance'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://compound.finance'], confidence: 100 },
+    audit_found: { value: 'YES', urls: ['https://docs.compound.finance/security/'], confidence: 100 },
+    technical_docs: { value: 'YES', urls: ['https://docs.compound.finance'], confidence: 100 },
+    on_chain_governance: { value: 'YES', urls: ['https://compound.finance/governance'], confidence: 100 },
+    clear_use_case: { value: 'YES', urls: ['https://compound.finance'], confidence: 100 },
+    founded_year: 2018,
+    ecosystem_level: 'major',
+    adoption_level: 'large',
+  },
+  'Curve': {
+    open_source: { value: 'YES', urls: ['https://github.com/curvefi'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/curvefi'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://curve.fi'], confidence: 100 },
+    audit_found: { value: 'YES', urls: ['https://docs.curve.fi/security/security/'], confidence: 95 },
+    technical_docs: { value: 'YES', urls: ['https://docs.curve.fi'], confidence: 100 },
+    on_chain_governance: { value: 'YES', urls: ['https://dao.curve.fi'], confidence: 100 },
+    founded_year: 2020,
+    ecosystem_level: 'major',
+    adoption_level: 'large',
+  },
+  'Morpho': {
+    open_source: { value: 'YES', urls: ['https://github.com/morpho-org'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/morpho-org'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://app.morpho.org'], confidence: 100 },
+    audit_found: { value: 'YES', urls: ['https://docs.morpho.org/security/audits'], confidence: 95 },
+    technical_docs: { value: 'YES', urls: ['https://docs.morpho.org'], confidence: 100 },
+    founded_year: 2021,
+    ecosystem_level: 'growing',
+    adoption_level: 'medium',
+  },
+  'Lido': {
+    open_source: { value: 'YES', urls: ['https://github.com/lidofinance'], confidence: 100 },
+    active_github: { value: 'YES', urls: ['https://github.com/lidofinance'], confidence: 100 },
+    live_product: { value: 'YES', urls: ['https://lido.fi'], confidence: 100 },
+    audit_found: { value: 'YES', urls: ['https://github.com/lidofinance/audits'], confidence: 100 },
+    on_chain_governance: { value: 'YES', urls: ['https://vote.lido.fi'], confidence: 100 },
+    technical_docs: { value: 'YES', urls: ['https://docs.lido.fi'], confidence: 100 },
+    founded_year: 2020,
     ecosystem_level: 'major',
     adoption_level: 'large',
   },
@@ -173,6 +237,57 @@ const ENTITY_GROUND_TRUTH = {
     ecosystem_level: 'major',
     adoption_level: 'large',
   },
+  // ── Known failures — fraud signals pre-confirmed ─────────────────
+  'FTX': {
+    confirmed_fraud: { value: 'YES', urls: ['https://www.justice.gov/usao-sdny/pr/samuel-bankman-fried-sentenced-25-years-prison'], confidence: 100 },
+    confirmed_scam: { value: 'YES', urls: ['https://www.sec.gov/news/press-release/2022-219'], confidence: 100 },
+    criminal_conviction: { value: 'YES', urls: ['https://www.justice.gov/usao-sdny/pr/samuel-bankman-fried-sentenced-25-years-prison'], confidence: 100 },
+    sec_enforcement: { value: 'YES', urls: ['https://www.sec.gov/news/press-release/2022-219'], confidence: 100 },
+    founded_year: 2019,
+    ecosystem_level: 'none',
+    adoption_level: 'none',
+  },
+  'Terra Luna': {
+    confirmed_fraud: { value: 'YES', urls: ['https://www.sec.gov/news/press-release/2023-237'], confidence: 100 },
+    criminal_conviction: { value: 'YES', urls: ['https://www.justice.gov/usao-sdny/pr/do-kwon-pleads-guilty-fraud'], confidence: 100 },
+    sec_enforcement: { value: 'YES', urls: ['https://www.sec.gov/news/press-release/2023-237'], confidence: 100 },
+    founded_year: 2018,
+    ecosystem_level: 'none',
+    adoption_level: 'none',
+  },
+  'Celsius': {
+    confirmed_fraud: { value: 'YES', urls: ['https://www.sec.gov/news/press-release/2023-122'], confidence: 100 },
+    sec_enforcement: { value: 'YES', urls: ['https://www.sec.gov/news/press-release/2023-122'], confidence: 100 },
+    criminal_conviction: { value: 'YES', urls: ['https://www.justice.gov/opa/pr/celsius-network-ceo-charged-fraud'], confidence: 95 },
+    founded_year: 2017,
+    ecosystem_level: 'none',
+    adoption_level: 'none',
+  },
+  'SafeMoon': {
+    confirmed_fraud: { value: 'YES', urls: ['https://www.sec.gov/litigation/litreleases/2023/lr25896.htm'], confidence: 100 },
+    confirmed_scam: { value: 'YES', urls: ['https://www.sec.gov/litigation/litreleases/2023/lr25896.htm'], confidence: 100 },
+    sec_enforcement: { value: 'YES', urls: ['https://www.sec.gov/litigation/litreleases/2023/lr25896.htm'], confidence: 100 },
+    criminal_conviction: { value: 'YES', urls: ['https://www.justice.gov/opa/pr/safemoon-executives-charged-fraud'], confidence: 95 },
+    founded_year: 2021,
+    ecosystem_level: 'none',
+    adoption_level: 'none',
+  },
+  'OneCoin': {
+    confirmed_fraud: { value: 'YES', urls: ['https://www.justice.gov/usao-sdny/pr/founder-onecoin-charged-connection-multibillion-dollar-pyramid-scheme'], confidence: 100 },
+    confirmed_scam: { value: 'YES', urls: ['https://www.justice.gov/usao-sdny/pr/founder-onecoin-charged-connection-multibillion-dollar-pyramid-scheme'], confidence: 100 },
+    criminal_conviction: { value: 'YES', urls: ['https://www.justice.gov/usao-sdny/pr/onecoin-co-founder-pleads-guilty'], confidence: 100 },
+    founded_year: 2014,
+    ecosystem_level: 'none',
+    adoption_level: 'none',
+  },
+  'BitConnect': {
+    confirmed_fraud: { value: 'YES', urls: ['https://www.sec.gov/news/press-release/2021-89'], confidence: 100 },
+    confirmed_scam: { value: 'YES', urls: ['https://www.justice.gov/opa/pr/bitconnect-founder-indicted-global-2-4-billion-cryptocurrency-scheme'], confidence: 100 },
+    sec_enforcement: { value: 'YES', urls: ['https://www.sec.gov/news/press-release/2021-89'], confidence: 100 },
+    founded_year: 2016,
+    ecosystem_level: 'none',
+    adoption_level: 'none',
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -193,61 +308,191 @@ const MANDATORY_SIGNALS_BY_TYPE = {
 // ═══════════════════════════════════════════════════════════════════════
 // ENHANCED ENTITY RESOLUTION
 // ═══════════════════════════════════════════════════════════════════════
+// Exact-match only — keys must be the canonical name or URL.
+// Fuzzy substring matching is disabled for project names to prevent
+// agent names (e.g. "Foundr", "VERIS") from resolving to unrelated entities.
 const ENHANCED_ENTITY_MAP = {
+  // ── L1/L2 networks ─────────────────────────────────────────────────
   'bitcoin.org':             { entity: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
   'bitcoincore.org':         { entity: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
   'bitcoin.com':             { entity: 'Bitcoin',     type: 'l1l2', note: 'Not official bitcoin.org' },
-  'github.com/bitcoin':      { entity: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
   'bitcoin':                 { entity: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
   'btc':                     { entity: 'Bitcoin',     type: 'l1l2', network: 'Bitcoin' },
   'ethereum.org':            { entity: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
   'ethresear.ch':            { entity: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
-  'github.com/ethereum':     { entity: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
   'ethereum':                { entity: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
   'eth':                     { entity: 'Ethereum',    type: 'l1l2', network: 'Ethereum' },
   'solana.com':              { entity: 'Solana',      type: 'l1l2', network: 'Solana' },
   'solana.org':              { entity: 'Solana',      type: 'l1l2', network: 'Solana' },
-  'github.com/solana-labs':  { entity: 'Solana',      type: 'l1l2', network: 'Solana' },
+  'solana':                  { entity: 'Solana',      type: 'l1l2', network: 'Solana' },
+  'sol':                     { entity: 'Solana',      type: 'l1l2', network: 'Solana' },
+  'avax.network':            { entity: 'Avalanche',   type: 'l1l2' },
+  'avalanche':               { entity: 'Avalanche',   type: 'l1l2' },
+  'avax':                    { entity: 'Avalanche',   type: 'l1l2' },
+  'polygon.technology':      { entity: 'Polygon',     type: 'l1l2' },
+  'polygon.io':              { entity: 'Polygon',     type: 'l1l2' },
+  'polygon':                 { entity: 'Polygon',     type: 'l1l2' },
+  'matic':                   { entity: 'Polygon',     type: 'l1l2' },
+  'arbitrum.io':             { entity: 'Arbitrum',    type: 'l1l2' },
+  'arbitrum':                { entity: 'Arbitrum',    type: 'l1l2' },
+  'optimism.io':             { entity: 'Optimism',    type: 'l1l2' },
+  'optimism':                { entity: 'Optimism',    type: 'l1l2' },
+  'base.org':                { entity: 'Base',        type: 'l1l2' },
+  'base':                    { entity: 'Base',        type: 'l1l2' },
+  // ── Exchanges ───────────────────────────────────────────────────────
   'coinbase.com':            { entity: 'Coinbase',    type: 'exchange' },
+  'coinbase':                { entity: 'Coinbase',    type: 'exchange' },
   'binance.com':             { entity: 'Binance',     type: 'exchange' },
+  'binance':                 { entity: 'Binance',     type: 'exchange' },
   'kraken.com':              { entity: 'Kraken',      type: 'exchange' },
+  'kraken':                  { entity: 'Kraken',      type: 'exchange' },
+  // ── DeFi protocols ──────────────────────────────────────────────────
   'uniswap.org':             { entity: 'Uniswap',     type: 'defi' },
   'app.uniswap.org':         { entity: 'Uniswap',     type: 'defi' },
+  'uniswap':                 { entity: 'Uniswap',     type: 'defi' },
+  'uni':                     { entity: 'Uniswap',     type: 'defi' },
   'aave.com':                { entity: 'Aave',        type: 'defi' },
   'app.aave.com':            { entity: 'Aave',        type: 'defi' },
+  'aave':                    { entity: 'Aave',        type: 'defi' },
+  'makerdao.com':            { entity: 'MakerDAO',    type: 'dao' },
+  'makerdao':                { entity: 'MakerDAO',    type: 'dao' },
+  'maker':                   { entity: 'MakerDAO',    type: 'dao' },
+  'mkr':                     { entity: 'MakerDAO',    type: 'dao' },
+  'compound.finance':        { entity: 'Compound',    type: 'defi' },
+  'compound':                { entity: 'Compound',    type: 'defi' },
+  'comp':                    { entity: 'Compound',    type: 'defi' },
+  'curve.fi':                { entity: 'Curve',       type: 'defi' },
+  'curve':                   { entity: 'Curve',       type: 'defi' },
+  'crv':                     { entity: 'Curve',       type: 'defi' },
+  'morpho.org':              { entity: 'Morpho',      type: 'defi' },
+  'morpho':                  { entity: 'Morpho',      type: 'defi' },
+  'lido.fi':                 { entity: 'Lido',        type: 'defi' },
+  'lido':                    { entity: 'Lido',        type: 'defi' },
+  'stdo':                    { entity: 'Lido',        type: 'defi' },
+  'balancer.fi':             { entity: 'Balancer',    type: 'defi' },
+  'balancer':                { entity: 'Balancer',    type: 'defi' },
+  'yearn.finance':           { entity: 'Yearn',       type: 'defi' },
+  'yearn':                   { entity: 'Yearn',       type: 'defi' },
+  'yfi':                     { entity: 'Yearn',       type: 'defi' },
+  'sushi':                   { entity: 'SushiSwap',   type: 'defi' },
+  'sushiswap':               { entity: 'SushiSwap',   type: 'defi' },
+  // ── Trading protocols ───────────────────────────────────────────────
   'hyperliquid.xyz':         { entity: 'Hyperliquid', type: 'trading_protocol' },
   'app.hyperliquid.xyz':     { entity: 'Hyperliquid', type: 'trading_protocol' },
+  'hyperliquid':             { entity: 'Hyperliquid', type: 'trading_protocol' },
+  'dydx':                    { entity: 'dYdX',        type: 'trading_protocol' },
+  'gmx.io':                  { entity: 'GMX',         type: 'trading_protocol' },
+  'gmx':                     { entity: 'GMX',         type: 'trading_protocol' },
+  // ── Tooling / Infrastructure ────────────────────────────────────────
   'chain.link':              { entity: 'Chainlink',   type: 'tooling' },
+  'chainlink':               { entity: 'Chainlink',   type: 'tooling' },
+  'link':                    { entity: 'Chainlink',   type: 'tooling' },
   'xrpl.org':                { entity: 'XRPL',        type: 'infrastructure' },
+  'xrpl':                    { entity: 'XRPL',        type: 'infrastructure' },
   'ripple.com':              { entity: 'Ripple',      type: 'infrastructure' },
+  'ripple':                  { entity: 'Ripple',      type: 'infrastructure' },
+  'xrp':                     { entity: 'XRPL',        type: 'infrastructure' },
+  'cosmos.network':          { entity: 'Cosmos',      type: 'infrastructure' },
+  'cosmos':                  { entity: 'Cosmos',      type: 'infrastructure' },
+  'atom':                    { entity: 'Cosmos',      type: 'infrastructure' },
+  'polkadot.network':        { entity: 'Polkadot',    type: 'infrastructure' },
+  'polkadot':                { entity: 'Polkadot',    type: 'infrastructure' },
+  'dot':                     { entity: 'Polkadot',    type: 'infrastructure' },
+  // ── Known failures ──────────────────────────────────────────────────
+  'ftx.com':                 { entity: 'FTX',         type: 'exchange' },
+  'ftx':                     { entity: 'FTX',         type: 'exchange' },
+  'terra':                   { entity: 'Terra Luna',  type: 'l1l2' },
+  'terra luna':              { entity: 'Terra Luna',  type: 'l1l2' },
+  'luna':                    { entity: 'Terra Luna',  type: 'l1l2' },
+  'ust':                     { entity: 'Terra Luna',  type: 'l1l2' },
+  'celsius.network':         { entity: 'Celsius',     type: 'exchange' },
+  'celsius':                 { entity: 'Celsius',     type: 'exchange' },
+  'safemoon':                { entity: 'SafeMoon',    type: 'memecoin' },
+  'bitconnect':              { entity: 'BitConnect',  type: 'memecoin' },
+  'onecoin':                 { entity: 'OneCoin',     type: 'memecoin' },
+};
+
+// URL-based resolution — only applied when project has a website/url field
+const URL_ENTITY_MAP = {
+  'github.com/bitcoin':        { entity: 'Bitcoin',    type: 'l1l2' },
+  'github.com/ethereum':       { entity: 'Ethereum',   type: 'l1l2' },
+  'github.com/solana-labs':    { entity: 'Solana',     type: 'l1l2' },
+  'github.com/uniswap':        { entity: 'Uniswap',   type: 'defi' },
+  'github.com/aave':           { entity: 'Aave',       type: 'defi' },
+  'github.com/makerdao':       { entity: 'MakerDAO',  type: 'dao' },
+  'github.com/compound-finance':{ entity: 'Compound', type: 'defi' },
+  'github.com/curvefi':        { entity: 'Curve',      type: 'defi' },
+  'github.com/morpho-org':     { entity: 'Morpho',    type: 'defi' },
+  'github.com/lidofinance':    { entity: 'Lido',       type: 'defi' },
+  'github.com/smartcontractkit':{ entity: 'Chainlink', type: 'tooling' },
+  'github.com/hyperliquid-dex':{ entity: 'Hyperliquid',type: 'trading_protocol' },
+  'github.com/xrplf':         { entity: 'XRPL',       type: 'infrastructure' },
 };
 
 export function resolveEntity(project) {
-  const input = (project.name || project.website || '')
-    .toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/\/$/, '')
-    .trim();
-  let resolved = ENHANCED_ENTITY_MAP[input];
-  if (!resolved) {
-    for (const [key, value] of Object.entries(ENHANCED_ENTITY_MAP)) {
-      if (input.includes(key) || key.includes(input)) {
-        resolved = value;
-        break;
+  // If a type='agent' request comes in, never remap the name to a project entity.
+  // Agent names like "Foundr", "VERIS", "ZERU" are agent identifiers, not project URLs.
+  if (project._isAgent) return project;
+
+  const name  = (project.name  || '').trim();
+  const url   = (project.website || project.url || '').toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/\/$/, '');
+
+  // 1. Try exact name match (case-insensitive)
+  const nameLower = name.toLowerCase();
+  if (ENHANCED_ENTITY_MAP[nameLower]) {
+    const r = ENHANCED_ENTITY_MAP[nameLower];
+    return {
+      ...project,
+      name: r.entity,
+      entityType: project.entityType || r.type,
+      network: r.network,
+      resolvedFrom: name !== r.entity ? name : undefined,
+      note: r.note,
+    };
+  }
+
+  // 2. Try exact URL match
+  if (url) {
+    const urlMatch = ENHANCED_ENTITY_MAP[url] || URL_ENTITY_MAP[url];
+    if (urlMatch) {
+      const r = urlMatch;
+      return {
+        ...project,
+        name: r.entity,
+        entityType: project.entityType || r.type,
+        network: r.network,
+        resolvedFrom: name !== r.entity ? name : undefined,
+        note: r.note,
+      };
+    }
+    // 3. Partial URL match (e.g. "app.uniswap.org" contains "uniswap.org")
+    for (const [key, r] of Object.entries(ENHANCED_ENTITY_MAP)) {
+      if (key.includes('.') && url.includes(key)) {
+        return {
+          ...project,
+          name: r.entity,
+          entityType: project.entityType || r.type,
+          network: r.network,
+          resolvedFrom: name !== r.entity ? name : undefined,
+          note: r.note,
+        };
+      }
+    }
+    // 4. Partial URL_ENTITY_MAP match
+    for (const [key, r] of Object.entries(URL_ENTITY_MAP)) {
+      if (url.includes(key)) {
+        return {
+          ...project,
+          name: r.entity,
+          entityType: project.entityType || r.type,
+          resolvedFrom: name !== r.entity ? name : undefined,
+        };
       }
     }
   }
-  if (resolved) {
-    const originalName = project.name;
-    return {
-      ...project,
-      name: resolved.entity,
-      entityType: project.entityType || resolved.type,
-      network: resolved.network,
-      resolvedFrom: originalName !== resolved.entity ? originalName : undefined,
-      note: resolved.note,
-    };
-  }
+
+  // No resolution — return as-is
   return project;
 }
 
@@ -370,13 +615,23 @@ const OFFICIAL_DOMAINS = {
   solana:       ['solana.com','docs.solana.com','github.com/solana-labs'],
   chainlink:    ['chain.link','docs.chain.link','github.com/smartcontractkit'],
   uniswap:      ['uniswap.org','docs.uniswap.org','github.com/uniswap'],
+  aave:         ['aave.com','docs.aave.com','github.com/aave'],
+  makerdao:     ['makerdao.com','docs.makerdao.com','github.com/makerdao','vote.makerdao.com','makerburn.com'],
+  maker:        ['makerdao.com','docs.makerdao.com','github.com/makerdao'],
+  compound:     ['compound.finance','docs.compound.finance','github.com/compound-finance'],
+  curve:        ['curve.fi','docs.curve.fi','github.com/curvefi','dao.curve.fi'],
+  morpho:       ['morpho.org','app.morpho.org','docs.morpho.org','github.com/morpho-org'],
+  lido:         ['lido.fi','docs.lido.fi','github.com/lidofinance','vote.lido.fi'],
   xrpl:         ['xrpl.org','ripple.com','github.com/xrplf','github.com/ripple'],
   xrp:          ['xrpl.org','ripple.com','github.com/xrplf'],
   hyperliquid:  ['hyperliquid.xyz','app.hyperliquid.xyz','github.com/hyperliquid-dex'],
-  aave:         ['aave.com','docs.aave.com','github.com/aave'],
   cosmos:       ['cosmos.network','docs.cosmos.network','github.com/cosmos'],
   polkadot:     ['polkadot.network','wiki.polkadot.network','github.com/paritytech'],
   avalanche:    ['avax.network','docs.avax.network','github.com/ava-labs'],
+  polygon:      ['polygon.technology','docs.polygon.technology','github.com/maticnetwork'],
+  arbitrum:     ['arbitrum.io','docs.arbitrum.io','github.com/offchainlabs'],
+  optimism:     ['optimism.io','docs.optimism.io','github.com/ethereum-optimism'],
+  base:         ['base.org','docs.base.org','github.com/base-org'],
 };
 
 const TIER2_DOMAINS = [
@@ -498,24 +753,32 @@ const ENTITY_TEMPLATES = {
 };
 
 export function detectEntityType(project) {
-  const text = [project.name, project.description, project.website, project.entityType]
+  // Honour an explicit entityType / type field — never override it
+  const explicit = project.entityType || project.type;
+  const validTypes = ['l1l2','infrastructure','defi','trading_protocol','aiagent','memecoin','dao','startup','tooling','general','exchange'];
+  if (explicit && validTypes.includes(explicit)) return explicit;
+
+  const text = [project.name, project.description, project.serviceDescription, project.website]
     .filter(Boolean).join(' ').toLowerCase();
+
   const signals = {
-    l1l2: ['blockchain', 'layer 1', 'layer 2', 'l1', 'l2', 'mainnet', 'consensus', 'validator', 'node'],
-    infrastructure: ['foundation', 'network', 'ledger', 'xrpl', 'ripple', 'cosmos', 'polkadot', 'near', 'cardano', 'algorand'],
-    defi: ['defi', 'yield', 'lending', 'borrow', 'swap', 'amm', 'liquidity pool', 'vault', 'liquid staking', 'dex'],
-    trading_protocol: ['exchange', 'trading', 'derivatives', 'perpetuals', 'order book', 'hyperliquid', 'dydx', 'gmx', 'drift'],
-    aiagent: ['ai agent', 'autonomous agent', 'llm', 'gpt', 'copilot', 'assistant', 'autopilot', 'croo', 'veris', 'ai-powered'],
-    memecoin: ['meme', 'doge', 'shib', 'pepe', 'inu', 'elon', 'moon', 'fair launch', 'stealth launch'],
-    dao: ['dao', 'governance', 'vote', 'proposal', 'treasury', 'multisig', 'snapshot', 'aragon'],
-    startup: ['startup', 'seed', 'series a', 'backed by', 'venture', 'incubator', 'beta'],
-    tooling: ['sdk', 'rpc', 'indexer', 'explorer', 'bridge', 'oracle', 'developer tool', 'chainlink', 'wallet sdk'],
+    l1l2:             ['blockchain', 'layer 1', 'layer 2', 'l1', 'l2', 'mainnet', 'consensus', 'validator', 'node', 'proof of work', 'proof of stake'],
+    infrastructure:   ['foundation', 'ledger', 'xrpl', 'ripple', 'cosmos', 'polkadot', 'near', 'cardano', 'algorand', 'oracle', 'cross-chain', 'interoperability'],
+    defi:             ['defi', 'yield', 'lending', 'borrow', 'swap', 'amm', 'liquidity pool', 'vault', 'liquid staking', 'dex', 'money market', 'collateral', 'stablecoin', 'protocol', 'compound', 'curve', 'morpho', 'aave', 'uniswap', 'makerdao', 'lido', 'balancer'],
+    trading_protocol: ['exchange', 'trading', 'derivatives', 'perpetuals', 'order book', 'hyperliquid', 'dydx', 'gmx', 'drift', 'futures', 'options', 'spot trading'],
+    aiagent:          ['ai agent', 'autonomous agent', 'llm', 'gpt', 'copilot', 'assistant', 'autopilot', 'croo', 'veris', 'ai-powered', 'agent economy', 'agentic', 'zeru', 'foundr agent'],
+    memecoin:         ['meme', 'doge', 'shib', 'pepe', 'inu', 'elon', 'moon', 'fair launch', 'stealth launch', 'safemoon', 'bonk'],
+    dao:              ['dao', 'governance', 'vote', 'proposal', 'treasury', 'multisig', 'snapshot', 'aragon', 'makerdao', 'compound governance'],
+    startup:          ['startup', 'seed', 'series a', 'backed by', 'venture', 'incubator', 'beta', 'early stage'],
+    tooling:          ['sdk', 'rpc', 'indexer', 'explorer', 'bridge', 'developer tool', 'chainlink', 'wallet sdk', 'api', 'infrastructure tool'],
+    exchange:         ['cex', 'centralized exchange', 'ftx', 'celsius', 'custodial'],
   };
+
   const matches = Object.entries(signals)
-    .filter(([k]) => k !== 'general')
     .map(([type, terms]) => ({ type, score: terms.filter(s => text.includes(s)).length }))
     .filter(e => e.score > 0)
     .sort((a, b) => b.score - a.score);
+
   return matches[0]?.type || 'general';
 }
 
@@ -820,15 +1083,22 @@ const ENTITY_BENCHMARKS = {
   // Major DeFi — well audited, public teams
   'Uniswap':    { type: 'major_defi',       expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
   'Aave':       { type: 'major_defi',       expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
+  'MakerDAO':   { type: 'major_dao',        expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
+  'Compound':   { type: 'major_defi',       expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
+  'Curve':      { type: 'major_defi',       expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
+  'Lido':       { type: 'major_defi',       expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
   'Chainlink':  { type: 'major_tooling',    expectedLegitimacy: { min: 55, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
-  // Growing platforms — less data available
+  // Growing platforms
+  'Morpho':     { type: 'growing_defi',     expectedLegitimacy: { min: 45, max: 85  }, expectedMaturity: { min: 40, max: 80  } },
   'Hyperliquid':{ type: 'growing_platform', expectedLegitimacy: { min: 40, max: 80  }, expectedMaturity: { min: 35, max: 75  } },
   'XRPL':       { type: 'infrastructure',   expectedLegitimacy: { min: 50, max: 90  }, expectedMaturity: { min: 50, max: 85  } },
-  // Known failures — should score low
-  'FTX':        { type: 'known_failure',    expectedLegitimacy: { min: 0,  max: 35  }, expectedMaturity: { min: 0,  max: 35  }, criticalExpected: true },
-  'Terra Luna': { type: 'known_failure',    expectedLegitimacy: { min: 0,  max: 35  }, expectedMaturity: { min: 0,  max: 35  }, criticalExpected: true },
-  'Celsius':    { type: 'known_failure',    expectedLegitimacy: { min: 0,  max: 35  }, expectedMaturity: { min: 0,  max: 35  }, criticalExpected: true },
+  // Known failures — must score low
+  'FTX':        { type: 'known_failure',    expectedLegitimacy: { min: 0,  max: 25  }, expectedMaturity: { min: 0,  max: 25  }, criticalExpected: true },
+  'Terra Luna': { type: 'known_failure',    expectedLegitimacy: { min: 0,  max: 25  }, expectedMaturity: { min: 0,  max: 25  }, criticalExpected: true },
+  'Celsius':    { type: 'known_failure',    expectedLegitimacy: { min: 0,  max: 25  }, expectedMaturity: { min: 0,  max: 25  }, criticalExpected: true },
+  'SafeMoon':   { type: 'known_scam',       expectedLegitimacy: { min: 0,  max: 20  }, expectedMaturity: { min: 0,  max: 20  }, criticalExpected: true },
   'BitConnect': { type: 'known_scam',       expectedLegitimacy: { min: 0,  max: 20  }, expectedMaturity: { min: 0,  max: 20  }, criticalExpected: true },
+  'OneCoin':    { type: 'known_scam',       expectedLegitimacy: { min: 0,  max: 15  }, expectedMaturity: { min: 0,  max: 15  }, criticalExpected: true },
 };
 
 function validateReasonableness(projectName, legitimacyScore, maturityScore) {
@@ -1012,20 +1282,25 @@ async function collectEvidence(query, projectName='') {
 function buildSearchQueries(project, entityType) {
   const n = project.name;
   const q = {
-    identity:      `${n} founders team executives CEO LinkedIn who built created`,
-    documentation: `${n} whitepaper roadmap documentation technical paper tokenomics`,
-    development:   `${n} GitHub repository open source contributors commits releases`,
-    community:     `${n} community Twitter followers users adoption media coverage`,
-    risk:          `${n} scam fraud rug pull hack exploit lawsuit SEC CFTC criminal`,
-    longevity:     `${n} founded launched year history milestones when created`,
-    adoption:      `${n} TVL users transactions exchange listed institutional adoption scale`,
-    ecosystem:     `${n} developer ecosystem SDK integrations partnerships network`,
+    identity:      `"${n}" founders team executives CEO LinkedIn who built created`,
+    documentation: `"${n}" whitepaper roadmap documentation technical paper tokenomics`,
+    development:   `"${n}" GitHub repository open source contributors releases`,
+    community:     `"${n}" community users adoption media coverage review`,
+    risk:          `"${n}" scam fraud rug pull hack exploit lawsuit SEC CFTC criminal charges`,
+    longevity:     `"${n}" founded launched year history milestones`,
+    adoption:      `"${n}" TVL total value locked users transactions exchange listed institutional`,
+    ecosystem:     `"${n}" developer ecosystem SDK integrations partnerships`,
   };
-  if (['defi','trading_protocol'].includes(entityType)) {
-    q.security = `${n} audit certik trail of bits halborn openzeppelin bug bounty insurance`;
+  // Security queries for ALL protocol types — not just defi/trading
+  if (['defi','trading_protocol','dao','infrastructure','l1l2','tooling'].includes(entityType)) {
+    q.security = `"${n}" security audit certik trail of bits halborn openzeppelin consensys diligence bug bounty vulnerability`;
   }
   if (['memecoin','nft'].includes(entityType)) {
-    q.liquidity = `${n} liquidity locked holders distribution DEX trading pair`;
+    q.liquidity = `"${n}" liquidity locked holders distribution DEX trading pair`;
+  }
+  // Extra negative-event query for known-bad entity types
+  if (['exchange','memecoin'].includes(entityType)) {
+    q.enforcement = `"${n}" bankruptcy fraud SEC CFTC enforcement charges collapse failure`;
   }
   return q;
 }
@@ -1323,11 +1598,20 @@ export const CALIBRATION_BENCHMARKS = {
   chainlink:    { legitMin: 55, maturityMin: 50 },
   uniswap:      { legitMin: 50, maturityMin: 45 },
   aave:         { legitMin: 50, maturityMin: 45 },
+  makerdao:     { legitMin: 50, maturityMin: 45 },
+  compound:     { legitMin: 50, maturityMin: 45 },
+  curve:        { legitMin: 50, maturityMin: 45 },
+  lido:         { legitMin: 50, maturityMin: 45 },
+  morpho:       { legitMin: 40, maturityMin: 35 },
   hyperliquid:  { legitMin: 40, maturityMin: 35 },
   xrpl:         { legitMin: 50, maturityMin: 45 },
   ftx:          { expectCritical: true },
   'terra luna': { expectCritical: true },
+  terra:        { expectCritical: true },
   celsius:      { expectCritical: true },
+  safemoon:     { expectCritical: true },
+  bitconnect:   { expectCritical: true },
+  onecoin:      { expectCritical: true },
 };
 
 export function checkCalibration(name, legit, maturity) {
@@ -1990,7 +2274,15 @@ export async function runVERIS(requirements, requesterSdkKey) {
   // ── PROJECT DUE DILIGENCE ────────────────────────────────────────
   if (req.type === 'project') {
     if (!req.name) throw new Error('Project due diligence requires: name');
-    const report = await runProjectDueDiligence(req);
+    // Pass website/github/twitter through so the report can display them
+    const report = await runProjectDueDiligence({
+      name:        req.name,
+      entityType:  req.entityType || req.type_hint,
+      website:     req.website || null,
+      github:      req.github  || null,
+      twitter:     req.twitter || null,
+      description: req.description || null,
+    });
     const m = parseReportMetrics(report);
     await saveTrustReceipt(
       'project',
