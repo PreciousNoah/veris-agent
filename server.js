@@ -3,39 +3,51 @@ import express from 'express';
 import cors from 'cors';
 import pkg from '@croo-network/sdk';
 const { AgentClient, EventType, DeliverableType } = pkg;
-import { runVERIS, handleCompare, getTrustReceipts, supabase, runProjectDueDiligence } from './veris.js';
+import { runVERIS, handleCompare, getTrustReceipts, supabase } from './veris.js';
 import fs from 'fs';
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+
+// FIX: parse JSON and plain text — CROO orders sometimes send raw text bodies
+app.use(express.json({ strict: false }));
+app.use(express.text({ type: '*/*' }));
 
 const config = {
   baseURL: process.env.CROO_API_URL,
-  wsURL: process.env.CROO_WS_URL,
-  rpcURL: 'https://mainnet.base.org',
-  logger: { debug:()=>{}, info:console.log, warn:console.warn, error:console.error },
+  wsURL:   process.env.CROO_WS_URL,
+  rpcURL:  'https://mainnet.base.org',
+  logger:  { debug:()=>{}, info:console.log, warn:console.warn, error:console.error },
 };
 
-const RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://veris-agent.onrender.com';
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL
+  || process.env.RAILWAY_STATIC_URL
+  || 'https://veris-agent-production.up.railway.app';
 
 let credentials = {};
 try {
   credentials = JSON.parse(fs.readFileSync('veris-credentials.json', 'utf8'));
 } catch {
-  console.warn('veris-credentials.json not found');
+  console.warn('veris-credentials.json not found — using env vars only');
 }
 
-const PROVIDER_SDK_KEY  = process.env.CROO_API_KEY || credentials.sdkKey;
+const PROVIDER_SDK_KEY  = process.env.CROO_API_KEY        || credentials.sdkKey;
 const REQUESTER_SDK_KEY = process.env.CROO_REQUESTER_SDK_KEY;
 const STORE_SDK_KEY     = process.env.CROO_STORE_SDK_KEY;
 
-// Cache TTL: 24 hours
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // ════════════════════════════════════════════════════════════════════
-// CACHE HELPERS
+// HELPERS
 // ════════════════════════════════════════════════════════════════════
+
+// Safely parse a request body that might be JSON string, JSON object,
+// or plain text (all three come in from different CROO order formats)
+function parseBody(body) {
+  if (!body) return null;
+  if (typeof body === 'object') return body;
+  try { return JSON.parse(body); } catch { return null; }
+}
 
 async function getCachedReceipt(entityId) {
   if (!supabase) return null;
@@ -49,15 +61,13 @@ async function getCachedReceipt(entityId) {
       .limit(1)
       .single();
     return data || null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function parseScoreFromReport(report) {
   if (!report) return null;
-  const m = report.match(/LEGITIMACY:\s+(\d+)\/100/i) ||
-            report.match(/OVERALL SCORE:\s*(\d+)/i);
+  const m = report.match(/LEGITIMACY:\s+(\d+)\/100/i)
+         || report.match(/OVERALL SCORE:\s*(\d+)/i);
   return m ? parseInt(m[1]) : null;
 }
 
@@ -67,7 +77,7 @@ function parseConfidenceFromReport(report) {
   return m ? parseInt(m[1]) : null;
 }
 
-function parseRiskFromReport(report) {
+function parseRecommendationFromReport(report) {
   if (!report) return 'Unknown';
   const m = report.match(/RECOMMENDATION:\s+[^\s]+\s+([A-Z ]+)\s+\[Band/);
   return m ? m[1].trim() : 'Unknown';
@@ -75,18 +85,24 @@ function parseRiskFromReport(report) {
 
 function parseSignalsFromReport(report) {
   if (!report) return { verified: 0, total: 0 };
-  const m = report.match(/SIGNAL COVERAGE:\s+(\d+)\/(\d+)/i) ||
-            report.match(/(\d+)\/(\d+) signals/i);
-  return m ? { verified: parseInt(m[1]), total: parseInt(m[2]) } : { verified: 0, total: 0 };
+  const m = report.match(/SIGNAL COVERAGE:\s+(\d+)\/(\d+)/i)
+         || report.match(/(\d+)\/(\d+) signals/i);
+  return m
+    ? { verified: parseInt(m[1]), total: parseInt(m[2]) }
+    : { verified: 0, total: 0 };
 }
 
 function parseIncidentsFromReport(report) {
   if (!report) return [];
   const incidents = [];
-  const hardMatch = report.match(/⛔ HARD TRUST EVENT[^\n]*\n([\s\S]*?)(?:══|$)/);
-  if (hardMatch) {
-    const lines = hardMatch[1].split('\n').filter(l => l.trim().startsWith('Confirmed') || l.includes('label:'));
-    incidents.push(...lines.map(l => l.trim()).filter(Boolean));
+  if (report.includes('⛔ HARD TRUST EVENT') || report.includes('CRITICAL RISK')) {
+    const section = report.match(/⛔ HARD TRUST EVENT[^\n]*\n([\s\S]*?)(?:══|RECOMMENDATION)/);
+    if (section) {
+      section[1].split('\n')
+        .map(l => l.trim())
+        .filter(l => l.startsWith('Confirmed') || l.includes('label:') || l.match(/[A-Z].*fraud|scam|rug|conviction/i))
+        .forEach(l => incidents.push(l));
+    }
   }
   return incidents;
 }
@@ -110,14 +126,18 @@ function receiptToTrustJSON(receipt, cached = true) {
 
 // ════════════════════════════════════════════════════════════════════
 // API KEY MIDDLEWARE
+// Skips gracefully if api_keys table doesn't exist yet
 // ════════════════════════════════════════════════════════════════════
 
 async function requireApiKey(req, res, next) {
-  // Skip auth if no Supabase (dev mode) or if table doesn't exist yet
-  if (!supabase) return next();
+  if (!supabase) return next(); // dev mode — no Supabase
 
   const key = req.headers['x-api-key'] || req.query.api_key;
-  if (!key) return res.status(401).json({ error: 'API key required. Pass X-Api-Key header or ?api_key= query param.' });
+  if (!key) {
+    return res.status(401).json({
+      error: 'API key required. Pass X-Api-Key header or ?api_key= query param.',
+    });
+  }
 
   try {
     const { data, error } = await supabase
@@ -126,7 +146,9 @@ async function requireApiKey(req, res, next) {
       .eq('key', key)
       .single();
 
-    if (error || !data) return res.status(403).json({ error: 'Invalid API key.' });
+    if (error || !data) {
+      return res.status(403).json({ error: 'Invalid API key.' });
+    }
 
     // Reset daily counter if it's a new day
     const today = new Date().toISOString().slice(0, 10);
@@ -139,10 +161,10 @@ async function requireApiKey(req, res, next) {
 
     const limit = data.daily_limit || 100;
     if (data.requests_today >= limit) {
-      return res.status(429).json({ error: `Daily limit of ${limit} requests reached.` });
+      return res.status(429).json({ error: `Daily limit of ${limit} reached.` });
     }
 
-    // Increment usage (fire-and-forget)
+    // Increment (fire-and-forget)
     supabase.from('api_keys')
       .update({ requests_today: data.requests_today + 1 })
       .eq('key', key)
@@ -151,7 +173,8 @@ async function requireApiKey(req, res, next) {
     req.apiKey = data;
     next();
   } catch {
-    // If api_keys table doesn't exist yet, let through (dev / pre-setup)
+    // Table doesn't exist yet — let through so tests aren't blocked
+    console.warn('api_keys table not found — skipping auth. Run the Supabase migration.');
     next();
   }
 }
@@ -176,7 +199,7 @@ app.get('/', (req, res) => {
       croo:     ['POST /audit', 'POST /compare', 'GET /receipts', 'GET /receipts/:entityId'],
       trust:    ['GET /trust/:entityName', 'GET /trust/:entityName?type=agent'],
       evidence: ['GET /evidence/:entityName'],
-      admin:    ['GET /receipts', 'GET /receipts/:entityId'],
+      a2a:      ['GET /a2a/demo/:entityName'],
     },
     network:  'Base Mainnet',
     protocol: 'CROO v1',
@@ -185,22 +208,40 @@ app.get('/', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// CROO ROUTES (existing — no auth required, CROO handles that)
+// CROO ROUTES — no auth, CROO handles that via SDK
 // ════════════════════════════════════════════════════════════════════
 
 app.post('/audit', async (req, res) => {
-  const { requirements } = req.body;
-  if (!requirements) return res.status(400).json({ error: 'requirements object needed' });
+  // Handle JSON object, JSON string, or plain text body
+  const body = parseBody(req.body);
+  let requirements = body?.requirements;
+
+  // If still no requirements, treat the whole body as requirements
+  if (!requirements && body && typeof body === 'object') {
+    requirements = body;
+  }
+
+  // Last resort: plain text body → treat as project name
+  if (!requirements && typeof req.body === 'string' && req.body.trim()) {
+    requirements = { type: 'project', name: req.body.trim() };
+  }
+
+  if (!requirements) {
+    return res.status(400).json({ error: 'requirements object needed' });
+  }
+
   try {
     const report = await runVERIS(requirements, REQUESTER_SDK_KEY);
     res.json({ report });
   } catch (err) {
+    console.error('/audit error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 app.post('/compare', async (req, res) => {
-  const { agents } = req.body;
+  const body   = parseBody(req.body);
+  const agents = body?.agents;
   if (!Array.isArray(agents) || agents.length < 2) {
     return res.status(400).json({ error: 'Compare requires at least 2 agents in an "agents" array' });
   }
@@ -238,21 +279,19 @@ app.get('/receipts/:entityId', async (req, res) => {
 
 // ════════════════════════════════════════════════════════════════════
 // TRUST API  —  GET /trust/:entityName
-// Consumed by: ZERU research agent, third-party agents, A2A calls
-// Returns structured JSON trust score — not a text report
+// Returns a structured JSON trust score.
+// This is what ZERU and other agents consume.
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/trust/:entityName', requireApiKey, async (req, res) => {
-  const entityName = req.params.entityName.trim();
-  const entityType = req.query.type || 'project'; // 'project' | 'agent'
+  const entityName   = req.params.entityName.trim();
+  const entityType   = req.query.type || 'project';
   const forceRefresh = req.query.refresh === 'true';
 
-  // 1. Check cache first
+  // 1. Return cached result if available
   if (!forceRefresh) {
     const cached = await getCachedReceipt(entityName);
-    if (cached) {
-      return res.json(receiptToTrustJSON(cached, true));
-    }
+    if (cached) return res.json(receiptToTrustJSON(cached, true));
   }
 
   // 2. Run full pipeline
@@ -261,17 +300,23 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
       ? { type: 'agent', agentName: entityName }
       : { type: 'project', name: entityName };
 
-    const report = await runVERIS(requirements, REQUESTER_SDK_KEY);
+    const report         = await runVERIS(requirements, REQUESTER_SDK_KEY);
+    const score          = parseScoreFromReport(report);
+    const confidence     = parseConfidenceFromReport(report);
+    const recommendation = parseRecommendationFromReport(report);
+    const signals        = parseSignalsFromReport(report);
+    const incidents      = parseIncidentsFromReport(report);
 
-    const score      = parseScoreFromReport(report);
-    const confidence = parseConfidenceFromReport(report);
-    const riskLevel  = parseRiskFromReport(report);
-    const signals    = parseSignalsFromReport(report);
-    const incidents  = parseIncidentsFromReport(report);
-
-    // Derive recommendation label from report
-    const recMatch = report.match(/RECOMMENDATION:\s+[^\s]+\s+([A-Z ]+)\s+\[Band/);
-    const recommendation = recMatch ? recMatch[1].trim() : riskLevel;
+    // Derive a simple risk level string
+    let riskLevel = 'Unknown';
+    if (score !== null) {
+      if (score >= 80)      riskLevel = 'Low';
+      else if (score >= 65) riskLevel = 'Low-Medium';
+      else if (score >= 50) riskLevel = 'Medium';
+      else if (score >= 30) riskLevel = 'High';
+      else                  riskLevel = 'Critical';
+    }
+    if (incidents.length > 0) riskLevel = 'Critical';
 
     res.json({
       entity:          entityName,
@@ -288,22 +333,22 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
       cached:          false,
     });
   } catch (err) {
+    console.error('/trust error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ════════════════════════════════════════════════════════════════════
 // EVIDENCE API  —  GET /evidence/:entityName
-// The most valuable endpoint for A2A composability.
-// Returns raw structured evidence so consuming agents can build
-// their own scoring models on top of VERIS data.
+// Returns raw structured evidence — not a score.
+// Lets other agents build their own models on top of VERIS data.
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
-  const entityName = req.params.entityName.trim();
+  const entityName   = req.params.entityName.trim();
   const forceRefresh = req.query.refresh === 'true';
 
-  // 1. Check Supabase for cached raw_evidence
+  // 1. Check for cached raw_evidence in Supabase
   if (!forceRefresh && supabase) {
     try {
       const { data } = await supabase
@@ -324,45 +369,33 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
           timestamp: data.created_at,
         });
       }
-    } catch {
-      // Cache miss — proceed to pipeline
-    }
+    } catch { /* cache miss — fall through */ }
   }
 
-  // 2. Run pipeline and return structured evidence
+  // 2. Run pipeline and extract evidence from report
   try {
-    // We run runProjectDueDiligence directly so we can intercept raw evidence
-    // The report is still saved to Supabase via saveTrustReceipt inside the pipeline
     const report = await runVERIS(
       { type: 'project', name: entityName },
       REQUESTER_SDK_KEY
     );
 
-    // Extract structured evidence fields from the report text
-    // (full raw_evidence is stored in Supabase by saveTrustReceipt if columns exist)
-    const signals = parseSignalsFromReport(report);
-
-    // Parse key evidence blocks from formatted report
+    const signals        = parseSignalsFromReport(report);
     const githubMatch    = report.match(/Active GitHub[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
     const auditMatch     = report.match(/Security audit found[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
     const whitepaperMatch= report.match(/Whitepaper found[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
     const foundedMatch   = report.match(/Founded:\s+(\d{4})/);
-    const founderMatch   = report.match(/Founders publicly named[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
-    const openSourceMatch= report.match(/\+\s*\d+\s+Open source confirmed/);
-    const liveMatch      = report.match(/\+\s*\d+\s+Live product confirmed/);
-    const incidentLines  = parseIncidentsFromReport(report);
+    const incidents      = parseIncidentsFromReport(report);
 
     res.json({
       entity: entityName,
       evidence: {
-        github:         githubMatch    ? [githubMatch[1]]    : null,
-        whitepaper:     whitepaperMatch? [whitepaperMatch[1]]: null,
-        audit:          auditMatch     ? [auditMatch[1]]     : null,
-        founders:       founderMatch   ? [founderMatch[1]]   : [],
-        founded:        foundedMatch   ? parseInt(foundedMatch[1]) : null,
-        openSource:     !!openSourceMatch,
-        liveProduct:    !!liveMatch,
-        incidents:      incidentLines,
+        github:      githubMatch     ? [githubMatch[1]]     : null,
+        whitepaper:  whitepaperMatch ? [whitepaperMatch[1]] : null,
+        audit:       auditMatch      ? [auditMatch[1]]      : null,
+        founded:     foundedMatch    ? parseInt(foundedMatch[1]) : null,
+        openSource:  report.includes('Open source confirmed'),
+        liveProduct: report.includes('Live product confirmed'),
+        incidents,
       },
       signalCoverage: {
         verified: signals.verified,
@@ -371,85 +404,77 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
                     ? Math.round((signals.verified / signals.total) * 100)
                     : 0,
       },
-      // Full report available if consuming agent needs it
-      reportAvailable: true,
       cached:    false,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
+    console.error('/evidence error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ════════════════════════════════════════════════════════════════════
-// A2A DEMO ROUTE  —  GET /a2a/demo
-// Proof-of-concept: VERIS consuming a research agent's output
-// and combining it with its own trust score.
-// Replace ZERU_API_URL env var with your research agent's endpoint.
+// A2A DEMO  —  GET /a2a/demo/:entityName
+// Shows VERIS + ZERU working together.
+// ZERU_API_URL env var points at your research agent.
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
   const entityName = req.params.entityName.trim();
   const zeruUrl    = process.env.ZERU_API_URL;
 
-  const result = {
-    entity:   entityName,
-    veris:    null,
-    research: null,
-    combined: null,
-    error:    null,
-  };
+  const result = { entity: entityName, veris: null, research: null, combined: null };
 
-  // 1. VERIS trust score (cached if available)
+  // VERIS trust (cached if available)
   try {
     const cached = await getCachedReceipt(entityName);
     if (cached) {
       result.veris = receiptToTrustJSON(cached, true);
     } else {
-      const report = await runVERIS(
-        { type: 'project', name: entityName },
-        REQUESTER_SDK_KEY
-      );
+      const report = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
       result.veris = {
-        trustScore:     parseScoreFromReport(report),
-        confidence:     parseConfidenceFromReport(report),
-        riskLevel:      parseRiskFromReport(report),
-        signalsVerified:parseSignalsFromReport(report).verified,
-        cached:         false,
+        trustScore:      parseScoreFromReport(report),
+        confidence:      parseConfidenceFromReport(report),
+        recommendation:  parseRecommendationFromReport(report),
+        signalsVerified: parseSignalsFromReport(report).verified,
+        incidents:       parseIncidentsFromReport(report),
+        cached:          false,
       };
     }
   } catch (err) {
-    result.error = `VERIS error: ${err.message}`;
+    result.veris = { error: err.message };
   }
 
-  // 2. ZERU research (if configured)
+  // ZERU research (if configured)
   if (zeruUrl) {
     try {
       const zeruRes = await fetch(
         `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
-        { headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' }, signal: AbortSignal.timeout(30000) }
+        {
+          headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
+          signal:  AbortSignal.timeout(30000),
+        }
       );
-      if (zeruRes.ok) {
-        result.research = await zeruRes.json();
-      }
+      result.research = zeruRes.ok ? await zeruRes.json() : { error: `ZERU returned ${zeruRes.status}` };
     } catch (err) {
       result.research = { error: `ZERU unavailable: ${err.message}` };
     }
   } else {
-    result.research = { note: 'Set ZERU_API_URL env var to enable research agent composability' };
+    result.research = { note: 'Set ZERU_API_URL env var to enable A2A composability demo' };
   }
 
-  // 3. Combined signal — VERIS trust + ZERU research
-  if (result.veris && result.research && !result.research.error) {
+  // Combined signal
+  if (result.veris?.trustScore !== null && result.veris?.trustScore !== undefined) {
+    const score = result.veris.trustScore;
     result.combined = {
-      entity:         entityName,
-      trustScore:     result.veris.trustScore,
-      researchRisks:  result.research.risks || [],
-      compositeSignal: result.veris.trustScore !== null
-        ? (result.veris.trustScore >= 65 ? 'Proceed with diligence' : 'High caution advised')
-        : 'Insufficient data',
-      dataSources:    ['VERIS Trust Engine', 'ZERU Research Agent'],
-      timestamp:      new Date().toISOString(),
+      entity:          entityName,
+      trustScore:      score,
+      researchRisks:   result.research?.risks || [],
+      compositeSignal: score >= 65 ? 'Proceed with standard diligence'
+                     : score >= 30 ? 'High caution — verify independently'
+                     : 'Do not engage — critical risk signals detected',
+      dataSources:     ['VERIS Trust Engine', zeruUrl ? 'ZERU Research Agent' : 'ZERU not connected'],
+      timestamp:       new Date().toISOString(),
     };
   }
 
@@ -463,7 +488,7 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 async function handleOrder(provider, orderId) {
   try {
     const order = await provider.getOrder(orderId);
-    console.log('📋 Full order:', JSON.stringify(order, null, 2));
+    console.log('📋 Order received:', orderId);
 
     const rawRequirement =
       order.requirement     ||
@@ -473,23 +498,19 @@ async function handleOrder(provider, orderId) {
       order.data            ||
       '';
 
-    console.log('📋 Raw requirement:', rawRequirement);
-
     let requirements = {};
     if (rawRequirement) {
-      try {
-        requirements = typeof rawRequirement === 'string'
-          ? JSON.parse(rawRequirement)
-          : rawRequirement;
-      } catch {
+      const parsed = parseBody(rawRequirement);
+      if (parsed && typeof parsed === 'object') {
+        requirements = parsed;
+      } else {
+        // Plain text — treat as project name
         requirements = { type: 'project', name: String(rawRequirement).trim() };
       }
     }
 
-    if (!requirements.type) requirements.type = 'project';
-    if (requirements.type === 'project' && !requirements.name) {
-      requirements.name = String(rawRequirement || 'Unknown').trim();
-    }
+    if (!requirements.type)                                    requirements.type = 'project';
+    if (requirements.type === 'project' && !requirements.name) requirements.name = String(rawRequirement || 'Unknown').trim();
 
     console.log('📋 Parsed requirements:', JSON.stringify(requirements));
 
@@ -505,16 +526,17 @@ async function handleOrder(provider, orderId) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// PROVIDER LISTENER
+// PROVIDER LISTENER  (WebSocket to CROO)
 // ════════════════════════════════════════════════════════════════════
 
 const activeConnections = new Set();
 let reconnectAttempts   = 0;
 
 async function startProvider(sdkKey, label) {
-  if (!sdkKey) { console.log(`No SDK key for ${label} — skipping`); return; }
+  if (!sdkKey)                       { console.log(`No SDK key for ${label} — skipping`); return; }
   if (activeConnections.has(sdkKey)) { console.log(`${label} already connected — skipping`); return; }
   activeConnections.add(sdkKey);
+
   try {
     console.log(`Starting ${label} provider...`);
     const provider = new AgentClient(config, sdkKey);
@@ -547,7 +569,7 @@ async function startProvider(sdkKey, label) {
       setTimeout(() => startProvider(sdkKey, label), delay);
     });
 
-    stream.on('error', (err) => console.error(`${label} error:`, err.message));
+    stream.on('error', (err) => console.error(`${label} WS error:`, err.message));
   } catch (err) {
     activeConnections.delete(sdkKey);
     reconnectAttempts++;
@@ -558,7 +580,7 @@ async function startProvider(sdkKey, label) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// KEEP-ALIVE
+// KEEP-ALIVE  (prevents Railway/Render sleeping)
 // ════════════════════════════════════════════════════════════════════
 
 setInterval(async () => {
