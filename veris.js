@@ -1777,56 +1777,74 @@ const CROO_ECOSYSTEM_GAPS = [
 async function collectMetadata(agentInfo, crooConfig) {
   console.log('  → Layer 1: Metadata due diligence...');
   const signals = {};
-  const notes = [];
+  const notes   = [];
   let agentData = null;
-  try {
-    const res = await fetch(
-      `${process.env.CROO_API_URL}/agents/${agentInfo.agentId}`,
-      { headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000) }
-    );
-    if (res.ok) {
-      agentData = await res.json();
-      signals.agent_listed = true;
-      signals.store_listed = true;
-      notes.push(`Store record found: ${agentData.name || agentInfo.agentId}`);
-    } else {
-      signals.agent_listed = false;
-      notes.push(`Store lookup returned ${res.status}`);
-    }
-  } catch (err) {
-    signals.agent_listed = false;
-    notes.push(`Store lookup failed: ${err.message}`);
+  const baseURL = process.env.CROO_API_URL || 'https://api.croo.network';
+
+  // Try multiple CROO API path formats — the SDK may expose different routes
+  const pathsToTry = [
+    `${baseURL}/agents/${agentInfo.agentId}`,
+    `${baseURL}/agent/${agentInfo.agentId}`,
+    `${baseURL}/v1/agents/${agentInfo.agentId}`,
+    `${baseURL}/services/${agentInfo.serviceId || agentInfo.agentId}`,
+  ].filter(Boolean);
+
+  for (const url of pathsToTry) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) {
+        agentData = await res.json();
+        signals.agent_listed = true;
+        notes.push(`Store record found via ${url.split('/').slice(-2).join('/')}: ${agentData.name || agentInfo.agentId}`);
+        break;
+      }
+    } catch { /* try next path */ }
   }
+
+  if (!agentData) {
+    signals.agent_listed = false;
+    notes.push('Store lookup: agent not found via CROO API (may be unlisted or ID mismatch)');
+  }
+
+  // Score metadata signals
   if (agentData) {
     signals.service_described = !!(agentData.description && agentData.description.length > 30);
-    signals.price_set = !!(agentData.price || agentData.services?.[0]?.price);
-    signals.sla_set = !!(agentData.slaMinutes || agentData.services?.[0]?.slaMinutes);
-    signals.category_tagged = !!(agentData.tags?.length || agentData.category);
-    signals.currently_online = agentData.status === 'online' || agentData.online === true;
-    if (signals.service_described) notes.push('Description: adequate');
-    if (!signals.service_described) notes.push('Description: missing or too short');
-    if (signals.currently_online) notes.push('Status: online');
-    else notes.push('Status: offline or unknown');
+    signals.price_set         = !!(agentData.price || agentData.services?.[0]?.price || agentData.priceUSD);
+    signals.sla_set           = !!(agentData.slaMinutes || agentData.services?.[0]?.slaMinutes || agentData.sla);
+    signals.category_tagged   = !!(agentData.tags?.length || agentData.category || agentData.type);
+    signals.currently_online  = agentData.status === 'online' || agentData.online === true || agentData.isOnline === true;
+    notes.push(signals.service_described ? 'Description: adequate' : 'Description: missing or too short');
+    notes.push(signals.currently_online  ? 'Status: online'        : 'Status: offline or unknown');
   } else {
+    // Fallback: use whatever was passed in the request
     signals.service_described = !!(agentInfo.serviceDescription && agentInfo.serviceDescription.length > 30);
-    signals.price_set = false;
-    signals.sla_set = false;
-    signals.category_tagged = !!agentInfo.category;
-    signals.currently_online = false;
+    signals.price_set         = false;
+    signals.sla_set           = false;
+    signals.category_tagged   = !!(agentInfo.category);
+    signals.currently_online  = false;
+    if (agentInfo.serviceDescription) {
+      notes.push('Using provided service description as fallback');
+    }
   }
+
   let score = 0, maxScore = 0;
   for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
     if (cfg.layer !== 1) continue;
     maxScore += cfg.points;
     if (signals[key]) score += cfg.points;
   }
+
   return {
-    score: maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
-    rawScore: score, maxScore,
+    score:            maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
+    rawScore:         score,
+    maxScore,
     signals,
     agentData,
     notes,
-    agentName: agentData?.name || agentInfo.agentName || agentInfo.agentId,
+    agentName:        agentData?.name || agentInfo.agentName || agentInfo.agentId,
     agentDescription: agentData?.description || agentInfo.serviceDescription || '',
   };
 }
@@ -1834,53 +1852,83 @@ async function collectMetadata(agentInfo, crooConfig) {
 async function collectWebIntelligence(agentInfo, meta, tavilyClientRef) {
   console.log('  → Layer 2: Web intelligence...');
   const signals = {};
-  const notes = [];
+  const notes   = [];
   const agentName = meta.agentName;
+  const agentId   = agentInfo.agentId;
+
   if (!tavilyClientRef) {
     notes.push('Web search not available');
     return { score: 0, rawScore: 0, maxScore: 27, signals, notes, coverage: 'none' };
   }
+
+  // Check CROO marketplace page directly first
+  const crooMarketplaceUrl = `https://agent.croo.network/agents/${agentId}`;
   try {
-    const res = await tavilyClientRef.search(
-      `"${agentName}" CROO agent OR AI agent autonomous`,
-      { searchDepth: 'basic', maxResults: 5 }
-    );
-    if (res.results?.length > 0) {
-      const combined = res.results.map(r => (r.content || '') + ' ' + (r.title || '')).join(' ').toLowerCase();
+    const r = await fetch(crooMarketplaceUrl, { signal: AbortSignal.timeout(6000) });
+    if (r.ok) {
       signals.web_presence = true;
-      notes.push(`Web presence: ${res.results.length} results found`);
-      signals.creator_findable = combined.includes('developer') || combined.includes('built by') || combined.includes('created by') || combined.includes('team');
-      signals.github_found = res.results.some(r => r.url?.includes('github.com'));
-      signals.media_mentioned = res.results.some(r => {
-        const u = r.url?.toLowerCase() || '';
-        return u.includes('medium.com') || u.includes('mirror.xyz') || u.includes('coindesk') || u.includes('cointelegraph') || u.includes('decrypt');
-      });
-      if (signals.creator_findable) notes.push('Creator: identifiable from web');
-      if (signals.github_found) notes.push('GitHub: repository found');
-      if (signals.media_mentioned) notes.push('Media: mentioned in publications');
-    } else {
-      signals.web_presence = false;
-      signals.creator_findable = false;
-      signals.github_found = false;
-      signals.media_mentioned = false;
-      notes.push('Web presence: no results found');
+      notes.push(`CROO marketplace listing confirmed: ${crooMarketplaceUrl}`);
     }
-  } catch (err) {
-    notes.push(`Web search error: ${err.message}`);
-    signals.web_presence = false;
-    signals.creator_findable = false;
-    signals.github_found = false;
-    signals.media_mentioned = false;
+  } catch { /* not found on marketplace */ }
+
+  // Web search — try both the name and the agent ID
+  const queries = [
+    `"${agentName}" CROO agent AI autonomous blockchain`,
+    `"${agentId}" CROO agent`,
+  ];
+
+  for (const query of queries) {
+    if (signals.web_presence && signals.creator_findable) break;
+    try {
+      const res = await tavilyClientRef.search(query, { searchDepth: 'basic', maxResults: 5 });
+      if (res.results?.length > 0) {
+        const combined = res.results.map(r => (r.content || '') + ' ' + (r.title || '')).join(' ').toLowerCase();
+        if (!signals.web_presence) {
+          signals.web_presence = true;
+          notes.push(`Web presence: ${res.results.length} results for "${query}"`);
+        }
+        if (!signals.creator_findable) {
+          signals.creator_findable = combined.includes('developer') || combined.includes('built by')
+            || combined.includes('created by') || combined.includes('team') || combined.includes('founder');
+          if (signals.creator_findable) notes.push('Creator: identifiable from web');
+        }
+        if (!signals.github_found) {
+          signals.github_found = res.results.some(r => r.url?.includes('github.com'));
+          if (signals.github_found) notes.push('GitHub: repository found');
+        }
+        if (!signals.media_mentioned) {
+          signals.media_mentioned = res.results.some(r => {
+            const u = r.url?.toLowerCase() || '';
+            return u.includes('medium.com') || u.includes('mirror.xyz') || u.includes('coindesk')
+              || u.includes('cointelegraph') || u.includes('decrypt') || u.includes('theblock');
+          });
+          if (signals.media_mentioned) notes.push('Media: mentioned in publications');
+        }
+      }
+    } catch (err) {
+      notes.push(`Web search error: ${err.message}`);
+    }
   }
+
+  if (!signals.web_presence) {
+    signals.web_presence     = false;
+    signals.creator_findable = false;
+    signals.github_found     = false;
+    signals.media_mentioned  = false;
+    notes.push('Web presence: no results found — this is normal for new CROO agents');
+  }
+
   let score = 0, maxScore = 0;
   for (const [key, cfg] of Object.entries(AGENT_SIGNALS)) {
     if (cfg.layer !== 2) continue;
     maxScore += cfg.points;
     if (signals[key]) score += cfg.points;
   }
+
   return {
-    score: maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
-    rawScore: score, maxScore,
+    score:    maxScore > 0 ? Math.round((score / maxScore) * 100) : 0,
+    rawScore: score,
+    maxScore,
     signals,
     notes,
     coverage: signals.web_presence ? 'partial' : 'none',
@@ -2003,22 +2051,47 @@ function buildSignalCoverage(meta, web, live) {
 }
 
 function buildRecommendation(overallScore, coverage, layers) {
-  const { meta, web, live } = layers;
-  const hasLiveData = live.tested;
-  const signalCoverage = coverage.coverage;
-  if (signalCoverage < 30 && !hasLiveData) {
+  const { live } = layers;
+  const hasLiveData     = live.tested;
+  const confirmedCount  = coverage.confirmedCount;
+  const total           = coverage.total;
+
+  // Only call INSUFFICIENT EVIDENCE if we confirmed literally nothing
+  // A new agent with just metadata (Layer 1) is not insufficient — it's early stage
+  if (confirmedCount === 0 && !hasLiveData) {
     return {
       label: 'INSUFFICIENT EVIDENCE',
       symbol: '?',
-      text: `Only ${coverage.confirmedCount}/${coverage.total} signals verifiable. Cannot make a confident trust assessment. Provide endpoint URL or enable economic verification for a more complete picture.`,
+      text: `No signals confirmed across any layer. Provide endpoint URL or ensure the agent is listed on CROO with a description.`,
       color: 'gray',
     };
   }
-  if (overallScore >= 80) return { label: 'SUITABLE FOR PRODUCTION', symbol: '✓', text: 'Strong signals across multiple verification layers. Proceed with standard commercial due diligence.', color: 'green' };
-  if (overallScore >= 65) return { label: 'GENERALLY SUITABLE', symbol: '~✓', text: 'Adequate signals present. Independent verification recommended before high-value use.', color: 'yellow' };
-  if (overallScore >= 45) return { label: 'PROCEED WITH CAUTION', symbol: '⚠', text: 'Mixed or limited signals. Use for low-stakes tasks only. Monitor closely.', color: 'orange' };
-  if (signalCoverage < 40) return { label: 'INSUFFICIENT EVIDENCE', symbol: '?', text: `Limited verifiable data (${coverage.confirmedCount}/${coverage.total} signals). This may reflect ecosystem limitations, not agent failure.`, color: 'gray' };
-  return { label: 'HIGH RISK', symbol: '✗', text: 'Significant gaps or failed verifications detected. Additional verification strongly recommended.', color: 'red' };
+
+  if (overallScore >= 80) return {
+    label: 'SUITABLE FOR PRODUCTION', symbol: '✓',
+    text: 'Strong signals across multiple verification layers. Proceed with standard commercial due diligence.',
+    color: 'green',
+  };
+  if (overallScore >= 65) return {
+    label: 'GENERALLY SUITABLE', symbol: '~✓',
+    text: 'Adequate signals present. Independent verification recommended before high-value use.',
+    color: 'yellow',
+  };
+  if (overallScore >= 45) return {
+    label: 'PROCEED WITH CAUTION', symbol: '⚠',
+    text: 'Limited signals available. Suitable for low-stakes tasks. Provide endpoint URL for deeper verification.',
+    color: 'orange',
+  };
+  if (overallScore >= 20) return {
+    label: 'LIMITED VERIFICATION', symbol: '~',
+    text: `Only ${confirmedCount}/${total} signals verifiable. This reflects ecosystem data limits, not necessarily agent failure. Supply endpoint URL to enable live testing.`,
+    color: 'orange',
+  };
+  return {
+    label: 'HIGH RISK', symbol: '✗',
+    text: 'Significant gaps or failed verifications. Additional verification strongly recommended before use.',
+    color: 'red',
+  };
 }
 
 async function placeTestOrder(agentClient, serviceId, prompt, timeoutMs = 90000) {

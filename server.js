@@ -298,26 +298,68 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
   const entityType   = req.query.type || 'project';
   const forceRefresh = req.query.refresh === 'true';
 
-  // 1. Return cached result if available
+  // Agent audits bypass cache — agent status changes frequently
+  if (entityType === 'agent') {
+    try {
+      const agentId = req.query.agentId || entityName;
+      const report  = await runVERIS({
+        type:               'agent',
+        agentId,
+        agentName:          entityName,
+        serviceId:          req.query.serviceId || null,
+        endpointUrl:        req.query.endpointUrl || null,
+        serviceDescription: req.query.description || null,
+        category:           req.query.category || 'general',
+      }, REQUESTER_SDK_KEY);
+
+      // Parse agent report metrics
+      const overallMatch  = report.match(/OVERALL SCORE:\s+(\d+)\/100/);
+      const confMatch     = report.match(/CONFIDENCE:\s+(High|Medium|Low)/i);
+      const recMatch      = report.match(/RECOMMENDATION:\s+[^\s]+\s+([A-Z ]+)\n/);
+      const coverageMatch = report.match(/SIGNAL COVERAGE:\s+(\d+)\/(\d+)/);
+      const l1Match       = report.match(/LAYER 1[^\d]*(\d+)\/100/);
+      const l2Match       = report.match(/LAYER 2[^\d]*(\d+)\/100/);
+      const l3Match       = report.match(/LAYER 3[^\d]*(\d+)\/100/);
+
+      return res.json({
+        entity:          entityName,
+        entityId:        agentId,
+        entityType:      'agent',
+        trustScore:      overallMatch ? parseInt(overallMatch[1]) : null,
+        confidence:      confMatch ? confMatch[1] : 'Low',
+        riskLevel:       deriveAgentRiskLevel(overallMatch ? parseInt(overallMatch[1]) : null),
+        recommendation:  recMatch ? recMatch[1].trim() : 'INSUFFICIENT EVIDENCE',
+        signalsVerified: coverageMatch ? parseInt(coverageMatch[1]) : 0,
+        signalsTotal:    coverageMatch ? parseInt(coverageMatch[2]) : 15,
+        layerScores: {
+          metadata: l1Match ? parseInt(l1Match[1]) : null,
+          web:      l2Match ? parseInt(l2Match[1]) : null,
+          live:     l3Match ? parseInt(l3Match[1]) : null,
+        },
+        incidents:   [],
+        lastAudited: new Date().toISOString(),
+        cached:      false,
+      });
+    } catch (err) {
+      console.error('/trust agent error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Project path (unchanged)
   if (!forceRefresh) {
     const cached = await getCachedReceipt(entityName);
     if (cached) return res.json(receiptToTrustJSON(cached, true));
   }
 
-  // 2. Run full pipeline
   try {
-    const requirements = entityType === 'agent'
-      ? { type: 'agent', agentName: entityName }
-      : { type: 'project', name: entityName };
-
-    const report         = await runVERIS(requirements, REQUESTER_SDK_KEY);
+    const report         = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
     const score          = parseScoreFromReport(report);
     const confidence     = parseConfidenceFromReport(report);
     const recommendation = parseRecommendationFromReport(report);
     const signals        = parseSignalsFromReport(report);
     const incidents      = parseIncidentsFromReport(report);
 
-    // Derive a simple risk level string
     let riskLevel = 'Unknown';
     if (score !== null) {
       if (score >= 80)      riskLevel = 'Low';
@@ -331,7 +373,7 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
     res.json({
       entity:          entityName,
       entityId:        entityName.toLowerCase().trim(),
-      entityType,
+      entityType:      'project',
       trustScore:      score,
       confidence,
       riskLevel,
@@ -347,6 +389,14 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+function deriveAgentRiskLevel(score) {
+  if (score === null) return 'Unknown';
+  if (score >= 70) return 'Low';
+  if (score >= 50) return 'Medium';
+  if (score >= 30) return 'High';
+  return 'Critical';
+}
 
 // ════════════════════════════════════════════════════════════════════
 // EVIDENCE API  —  GET /evidence/:entityName
