@@ -435,22 +435,18 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 
   const result = { entity: entityName, veris: null, research: null, combined: null };
 
-  // VERIS trust (cached if available)
+  // VERIS trust — force refresh so we never serve stale cached receipts
   try {
-    const cached = await getCachedReceipt(entityName);
-    if (cached) {
-      result.veris = receiptToTrustJSON(cached, true);
-    } else {
-      const report = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
-      result.veris = {
-        trustScore:      parseScoreFromReport(report),
-        confidence:      parseConfidenceFromReport(report),
-        recommendation:  parseRecommendationFromReport(report),
-        signalsVerified: parseSignalsFromReport(report).verified,
-        incidents:       parseIncidentsFromReport(report),
-        cached:          false,
-      };
-    }
+    const report = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
+    result.veris = {
+      trustScore:      parseScoreFromReport(report),
+      confidence:      parseConfidenceFromReport(report),
+      recommendation:  parseRecommendationFromReport(report),
+      signalsVerified: parseSignalsFromReport(report).verified,
+      signalsTotal:    parseSignalsFromReport(report).total,
+      incidents:       parseIncidentsFromReport(report),
+      cached:          false,
+    };
   } catch (err) {
     result.veris = { error: err.message };
   }
