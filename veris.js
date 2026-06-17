@@ -529,6 +529,16 @@ function resolveSignals(evidence, projectName, entityType) {
       console.log(`  📚 Signal resolver: Applied ${resolvedCount} ground truth facts for ${projectName}`);
     }
   }
+
+  // For known-bad entities: if any hard trust event is now YES via ground truth,
+  // skip the mandatory signal check — fraud signals ARE the sufficient evidence.
+  const hardEventKeys = ['confirmed_fraud','confirmed_scam','criminal_conviction','sec_enforcement','sanctions','confirmed_rug_pull'];
+  const hasConfirmedHardEvent = hardEventKeys.some(k => resolved[k] === 'YES');
+  if (hasConfirmedHardEvent) {
+    console.log(`  🚨 Hard trust event confirmed via ground truth for ${projectName} — skipping mandatory signal check`);
+    return resolved;
+  }
+
   const mandatorySignals = MANDATORY_SIGNALS_BY_TYPE[entityType] || [];
   const missingMandatory = mandatorySignals.filter(signal =>
     resolved[signal] === 'UNKNOWN'
