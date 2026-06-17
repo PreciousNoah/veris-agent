@@ -85,11 +85,21 @@ function parseRecommendationFromReport(report) {
 
 function parseSignalsFromReport(report) {
   if (!report) return { verified: 0, total: 0 };
-  const m = report.match(/SIGNAL COVERAGE:\s+(\d+)\/(\d+)/i)
-         || report.match(/(\d+)\/(\d+) signals/i);
-  return m
-    ? { verified: parseInt(m[1]), total: parseInt(m[2]) }
-    : { verified: 0, total: 0 };
+  // Try all known patterns in the report
+  const patterns = [
+    /SIGNAL COVERAGE:\s+(\d+)\/(\d+)/i,
+    /(\d+)\/(\d+)\s+signals\s+verifiable/i,
+    /(\d+)\/(\d+) signals/i,
+    /Signals:\s+(\d+)\/(\d+)/i,
+    /signals_verified['":\s]+(\d+)[^}]*signals_total['":\s]+(\d+)/i,
+  ];
+  for (const p of patterns) {
+    const m = report.match(p);
+    if (m) return { verified: parseInt(m[1]), total: parseInt(m[2]) };
+  }
+  // Count YES signals directly from the report as fallback
+  const yesCount = (report.match(/^\s+\+\s*\d+\s+/gm) || []).length;
+  return { verified: yesCount, total: yesCount > 0 ? 27 : 0 };
 }
 
 function parseIncidentsFromReport(report) {
