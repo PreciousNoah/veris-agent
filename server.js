@@ -390,7 +390,60 @@ app.get('/receipts/summary', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw error;
-    res.json({ receipts: data || [] });
+
+    // Filter out junk entity names — old CROO orders where raw JSON got saved as name
+    const isCleanName = (name) => {
+      if (!name) return false;
+      if (name.startsWith('{')) return false;       // raw JSON object
+      if (name.startsWith('"')) return false;       // quoted string
+      if (name.length > 60)  return false;          // suspiciously long
+      if (name.includes('\\')) return false;        // escaped JSON
+      if (name.includes('type')) return false;      // JSON field leaking in
+      return true;
+    };
+
+    // Derive risk level from score when stored value is missing
+    const deriveRisk = (score, stored) => {
+      if (stored && stored !== 'Unknown' && stored !== 'unknown') return stored;
+      if (score === null || score === undefined) return 'Unknown';
+      if (score >= 80) return 'Low';
+      if (score >= 65) return 'Low-Medium';
+      if (score >= 50) return 'Medium';
+      if (score >= 30) return 'High';
+      if (score <= 5)  return 'Critical';
+      return 'High';
+    };
+
+    // Deduplicate — keep latest per entity name
+    const seen = new Map();
+    for (const row of (data || [])) {
+      if (!isCleanName(row.entity_name)) continue;
+      if (!seen.has(row.entity_name)) seen.set(row.entity_name, row);
+    }
+
+    const entities = [...seen.values()].sort((a, b) => {
+      // Sort: projects by score desc, then agents
+      if (a.entity_type !== b.entity_type) {
+        return a.entity_type === 'project' ? -1 : 1;
+      }
+      return (b.score || 0) - (a.score || 0);
+    });
+
+    res.json({
+      totalEntitiesAudited: entities.length,
+      lastUpdated:          entities[0]?.created_at || null,
+      auditor:              'VERIS — Trust Infrastructure for the Agent Economy',
+      protocol:             'CROO v1 · Base Network',
+      entities: entities.map(e => ({
+        name:            e.entity_name,
+        type:            e.entity_type,
+        trustScore:      e.score,
+        riskLevel:       deriveRisk(e.score, e.risk_level),
+        signalsVerified: e.signals_verified,
+        signalsTotal:    e.signals_total,
+        lastAudited:     e.created_at,
+      })),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -814,4 +867,4 @@ app.listen(PORT, async () => {
   if (STORE_SDK_KEY && STORE_SDK_KEY !== PROVIDER_SDK_KEY) {
     await startProvider(STORE_SDK_KEY, 'Agent Store');
   }
-}); 
+});
