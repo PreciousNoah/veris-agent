@@ -1779,54 +1779,77 @@ async function collectMetadata(agentInfo, crooConfig) {
   const signals = {};
   const notes   = [];
   let agentData = null;
-  const baseURL = process.env.CROO_API_URL || 'https://api.croo.network';
+  const baseURL  = process.env.CROO_API_URL || 'https://api.croo.network';
+  const storeURL = 'https://store.croo.network';
+  const sdkKey   = process.env.CROO_API_KEY || '';
 
-  // Try multiple CROO API path formats — the SDK may expose different routes
-  const pathsToTry = [
+  // Auth headers — CROO API requires the SDK key
+  const headers = {
+    'Content-Type':  'application/json',
+    'Authorization': `Bearer ${sdkKey}`,
+    'X-Api-Key':     sdkKey,
+  };
+
+  // All known CROO path formats — try them all
+  const endpointsToTry = [
     `${baseURL}/agents/${agentInfo.agentId}`,
     `${baseURL}/agent/${agentInfo.agentId}`,
     `${baseURL}/v1/agents/${agentInfo.agentId}`,
-    `${baseURL}/services/${agentInfo.serviceId || agentInfo.agentId}`,
+    agentInfo.serviceId ? `${baseURL}/services/${agentInfo.serviceId}` : null,
+    agentInfo.serviceId ? `${baseURL}/v1/services/${agentInfo.serviceId}` : null,
+    `${storeURL}/agents/${agentInfo.agentId}`,
+    `${storeURL}/api/agents/${agentInfo.agentId}`,
   ].filter(Boolean);
 
-  for (const url of pathsToTry) {
+  for (const url of endpointsToTry) {
     try {
-      const res = await fetch(url, {
-        headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(8000),
-      });
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
       if (res.ok) {
         agentData = await res.json();
         signals.agent_listed = true;
-        notes.push(`Store record found via ${url.split('/').slice(-2).join('/')}: ${agentData.name || agentInfo.agentId}`);
+        const path = url.replace(baseURL, '').replace(storeURL, '');
+        notes.push(`Store record found [${path}]: ${agentData.name || agentInfo.agentId}`);
+        console.log(`  ✅ CROO metadata found at: ${path}`);
         break;
+      } else {
+        console.log(`  ↳ ${url.split('/').slice(-2).join('/')} → ${res.status}`);
       }
-    } catch { /* try next path */ }
+    } catch (err) {
+      console.log(`  ↳ ${url.split('/').slice(-2).join('/')} → ${err.message}`);
+    }
   }
 
   if (!agentData) {
     signals.agent_listed = false;
-    notes.push('Store lookup: agent not found via CROO API (may be unlisted or ID mismatch)');
+    notes.push('Store lookup: agent not found via CROO API — using provided info as fallback');
+    console.log('  ⚠ CROO metadata lookup failed for all paths — using fallback');
   }
 
-  // Score metadata signals
+  // Score Layer 1 signals
   if (agentData) {
     signals.service_described = !!(agentData.description && agentData.description.length > 30);
-    signals.price_set         = !!(agentData.price || agentData.services?.[0]?.price || agentData.priceUSD);
-    signals.sla_set           = !!(agentData.slaMinutes || agentData.services?.[0]?.slaMinutes || agentData.sla);
-    signals.category_tagged   = !!(agentData.tags?.length || agentData.category || agentData.type);
-    signals.currently_online  = agentData.status === 'online' || agentData.online === true || agentData.isOnline === true;
-    notes.push(signals.service_described ? 'Description: adequate' : 'Description: missing or too short');
-    notes.push(signals.currently_online  ? 'Status: online'        : 'Status: offline or unknown');
+    signals.price_set         = !!(agentData.price || agentData.services?.[0]?.price
+                                || agentData.priceUSD || agentData.basePrice);
+    signals.sla_set           = !!(agentData.slaMinutes || agentData.services?.[0]?.slaMinutes
+                                || agentData.sla || agentData.deliveryTime);
+    signals.category_tagged   = !!(agentData.tags?.length || agentData.category
+                                || agentData.type || agentData.capabilities?.length);
+    signals.currently_online  = agentData.status === 'online'
+                             || agentData.online === true
+                             || agentData.isOnline === true
+                             || agentData.available === true;
+    notes.push(signals.service_described ? 'Description: adequate'  : 'Description: missing or too short');
+    notes.push(signals.currently_online  ? 'Status: online'         : 'Status: offline or unknown');
+    notes.push(signals.price_set         ? 'Pricing: configured'    : 'Pricing: not set');
+    notes.push(signals.sla_set           ? 'SLA: defined'           : 'SLA: not configured');
   } else {
-    // Fallback: use whatever was passed in the request
     signals.service_described = !!(agentInfo.serviceDescription && agentInfo.serviceDescription.length > 30);
     signals.price_set         = false;
     signals.sla_set           = false;
     signals.category_tagged   = !!(agentInfo.category);
     signals.currently_online  = false;
     if (agentInfo.serviceDescription) {
-      notes.push('Using provided service description as fallback');
+      notes.push(`Using provided description as fallback (${agentInfo.serviceDescription.length} chars)`);
     }
   }
 
@@ -2380,4 +2403,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
   }
 
   throw new Error('Invalid type. Use "project" or "agent".');
-}
+  } 
