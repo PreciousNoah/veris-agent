@@ -403,9 +403,18 @@ app.get('/receipts/summary', async (req, res) => {
     };
 
     // Derive risk level from score when stored value is missing
-    const deriveRisk = (score, stored) => {
+    const deriveRisk = (score, stored, type) => {
       if (stored && stored !== 'Unknown' && stored !== 'unknown') return stored;
       if (score === null || score === undefined) return 'Unknown';
+      // Agents use a separate trust model
+      if (type === 'agent') {
+        if (score >= 76) return 'Trusted';
+        if (score >= 56) return 'Established';
+        if (score >= 36) return 'Emerging';
+        if (score >= 16) return 'Unverified';
+        return 'Critical';
+      }
+      // Projects
       if (score >= 80) return 'Low';
       if (score >= 65) return 'Low-Medium';
       if (score >= 50) return 'Medium';
@@ -438,7 +447,7 @@ app.get('/receipts/summary', async (req, res) => {
         name:            e.entity_name,
         type:            e.entity_type,
         trustScore:      e.score,
-        riskLevel:       deriveRisk(e.score, e.risk_level),
+        riskLevel:       deriveRisk(e.score, e.risk_level, e.entity_type),
         signalsVerified: e.signals_verified,
         signalsTotal:    e.signals_total,
         lastAudited:     e.created_at,
