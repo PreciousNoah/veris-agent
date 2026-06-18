@@ -204,12 +204,22 @@ app.get('/', (req, res) => {
       'trust-receipts',
       'trust-api',
       'evidence-api',
+      'a2a-composability',
     ],
     endpoints: {
-      croo:     ['POST /audit', 'POST /compare', 'GET /receipts', 'GET /receipts/:entityId'],
-      trust:    ['GET /trust/:entityName', 'GET /trust/:entityName?type=agent'],
+      croo:     ['POST /audit', 'POST /compare'],
+      trust:    [
+        'GET /trust/:entityName',
+        'GET /trust/:entityName?type=agent&agentId=&endpointUrl=',
+        'GET /compare/projects?a=Aave&b=Compound&c=MakerDAO',
+      ],
       evidence: ['GET /evidence/:entityName'],
-      a2a:      ['GET /a2a/demo/:entityName'],
+      receipts: [
+        'GET /receipts',
+        'GET /receipts/summary',
+        'GET /receipts/:entityId',
+      ],
+      a2a: ['GET /a2a/demo/:entityName'],
     },
     network:  'Base Mainnet',
     protocol: 'CROO v1',
@@ -249,6 +259,7 @@ app.post('/audit', async (req, res) => {
   }
 });
 
+// ── POST /compare  (agent trust compare — existing CROO format) ──────
 app.post('/compare', async (req, res) => {
   const body   = parseBody(req.body);
   const agents = body?.agents;
@@ -263,6 +274,97 @@ app.post('/compare', async (req, res) => {
   }
 });
 
+// ── GET /compare/projects?a=Aave&b=Compound  (judge-friendly) ────────
+// Returns structured JSON comparison — no text report, directly readable
+app.get('/compare/projects', requireApiKey, async (req, res) => {
+  const names = [req.query.a, req.query.b, req.query.c, req.query.d, req.query.e]
+    .filter(Boolean)
+    .map(n => n.trim());
+
+  if (names.length < 2) {
+    return res.status(400).json({ error: 'Pass at least ?a=ProjectA&b=ProjectB' });
+  }
+
+  console.log(`\n⚖️ VERIS Project Compare: ${names.join(' vs ')}`);
+
+  // Run all audits in parallel — use cache where available
+  const results = await Promise.all(names.map(async (name) => {
+    try {
+      // Check cache first
+      const cached = await getCachedReceipt(name);
+      if (cached) {
+        return {
+          entity:          cached.entity_name,
+          trustScore:      cached.score,
+          riskLevel:       cached.risk_level,
+          recommendation:  cached.recommendation || cached.risk_level,
+          signalsVerified: cached.signals_verified,
+          signalsTotal:    cached.signals_total,
+          confidence:      cached.confidence || null,
+          cached:          true,
+          error:           null,
+        };
+      }
+      // Run fresh audit
+      const report         = await runVERIS({ type: 'project', name }, REQUESTER_SDK_KEY);
+      const score          = parseScoreFromReport(report);
+      const signals        = parseSignalsFromReport(report);
+      const recommendation = parseRecommendationFromReport(report);
+      const incidents      = parseIncidentsFromReport(report);
+      let riskLevel = 'Unknown';
+      if (score !== null) {
+        if (score >= 80)      riskLevel = 'Low';
+        else if (score >= 65) riskLevel = 'Low-Medium';
+        else if (score >= 50) riskLevel = 'Medium';
+        else if (score >= 30) riskLevel = 'High';
+        else                  riskLevel = 'Critical';
+      }
+      if (incidents.length > 0) riskLevel = 'Critical';
+      return {
+        entity:          name,
+        trustScore:      score,
+        riskLevel,
+        recommendation,
+        signalsVerified: signals.verified,
+        signalsTotal:    signals.total,
+        confidence:      parseConfidenceFromReport(report),
+        cached:          false,
+        error:           null,
+      };
+    } catch (err) {
+      return { entity: name, trustScore: null, riskLevel: 'Error', error: err.message };
+    }
+  }));
+
+  // Rank by trust score
+  const ranked = [...results]
+    .filter(r => r.trustScore !== null)
+    .sort((a, b) => b.trustScore - a.trustScore);
+
+  const best  = ranked[0] || null;
+  const worst = ranked[ranked.length - 1] || null;
+
+  let verdict = 'Insufficient data to compare.';
+  if (best && best.trustScore >= 65) {
+    verdict = `${best.entity} has the strongest verifiable trust signals (${best.trustScore}/100). `;
+    if (worst && worst.trustScore < best.trustScore - 20) {
+      verdict += `${worst.entity} shows significantly weaker signals (${worst.trustScore}/100) — independent verification recommended before use.`;
+    } else {
+      verdict += `All compared entities show acceptable trust signals.`;
+    }
+  } else if (best) {
+    verdict = `All compared entities have limited verifiable signals. Strongest: ${best.entity} (${best.trustScore}/100). Proceed with caution across the board.`;
+  }
+
+  res.json({
+    compared:   names,
+    results:    ranked,
+    best:       best?.entity || null,
+    verdict,
+    timestamp:  new Date().toISOString(),
+  });
+});
+
 app.get('/receipts', async (req, res) => {
   if (!supabase) return res.json({ receipts: [], note: 'Supabase not configured' });
   try {
@@ -270,9 +372,78 @@ app.get('/receipts', async (req, res) => {
       .from('trust_receipts')
       .select('id, entity_type, entity_name, score, risk_level, signals_verified, signals_total, created_at')
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(50);
     if (error) throw error;
-    res.json({ receipts: data || [] });
+    res.json({ receipts: data || [], count: data?.length || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Judge-friendly summary — groups by entity, shows latest score per entity
+app.get('/receipts/summary', async (req, res) => {
+  if (!supabase) return res.json({ entities: [], note: 'Supabase not configured' });
+  try {
+    const { data, error } = await supabase
+      .from('trust_receipts')
+      .select('entity_type, entity_name, score, risk_level, signals_verified, signals_total, created_at')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+
+    // Filter out junk entity names — old CROO orders where raw JSON got saved as name
+    const isCleanName = (name) => {
+      if (!name) return false;
+      if (name.startsWith('{')) return false;       // raw JSON object
+      if (name.startsWith('"')) return false;       // quoted string
+      if (name.length > 60)  return false;          // suspiciously long
+      if (name.includes('\\')) return false;        // escaped JSON
+      if (name.includes('type')) return false;      // JSON field leaking in
+      return true;
+    };
+
+    // Derive risk level from score when stored value is missing
+    const deriveRisk = (score, stored) => {
+      if (stored && stored !== 'Unknown' && stored !== 'unknown') return stored;
+      if (score === null || score === undefined) return 'Unknown';
+      if (score >= 80) return 'Low';
+      if (score >= 65) return 'Low-Medium';
+      if (score >= 50) return 'Medium';
+      if (score >= 30) return 'High';
+      if (score <= 5)  return 'Critical';
+      return 'High';
+    };
+
+    // Deduplicate — keep latest per entity name
+    const seen = new Map();
+    for (const row of (data || [])) {
+      if (!isCleanName(row.entity_name)) continue;
+      if (!seen.has(row.entity_name)) seen.set(row.entity_name, row);
+    }
+
+    const entities = [...seen.values()].sort((a, b) => {
+      // Sort: projects by score desc, then agents
+      if (a.entity_type !== b.entity_type) {
+        return a.entity_type === 'project' ? -1 : 1;
+      }
+      return (b.score || 0) - (a.score || 0);
+    });
+
+    res.json({
+      totalEntitiesAudited: entities.length,
+      lastUpdated:          entities[0]?.created_at || null,
+      auditor:              'VERIS — Trust Infrastructure for the Agent Economy',
+      protocol:             'CROO v1 · Base Network',
+      entities: entities.map(e => ({
+        name:            e.entity_name,
+        type:            e.entity_type,
+        trustScore:      e.score,
+        riskLevel:       deriveRisk(e.score, e.risk_level),
+        signalsVerified: e.signals_verified,
+        signalsTotal:    e.signals_total,
+        lastAudited:     e.created_at,
+      })),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -281,7 +452,7 @@ app.get('/receipts', async (req, res) => {
 app.get('/receipts/:entityId', async (req, res) => {
   try {
     const receipts = await getTrustReceipts(req.params.entityId);
-    res.json({ entityId: req.params.entityId, receipts });
+    res.json({ entityId: req.params.entityId, receipts, count: receipts.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -321,20 +492,30 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
       const l2Match       = report.match(/LAYER 2[^\d]*(\d+)\/100/);
       const l3Match       = report.match(/LAYER 3[^\d]*(\d+)\/100/);
 
+      const layerScores = {
+        metadata: l1Match ? parseInt(l1Match[1]) : null,
+        web:      l2Match ? parseInt(l2Match[1]) : null,
+        live:     l3Match ? parseInt(l3Match[1]) : null,
+      };
+      const trustScore = overallMatch ? parseInt(overallMatch[1]) : null;
+
       return res.json({
         entity:          entityName,
         entityId:        agentId,
         entityType:      'agent',
-        trustScore:      overallMatch ? parseInt(overallMatch[1]) : null,
+        trustScore,
         confidence:      confMatch ? confMatch[1] : 'Low',
-        riskLevel:       deriveAgentRiskLevel(overallMatch ? parseInt(overallMatch[1]) : null),
-        recommendation:  recMatch ? recMatch[1].trim() : 'INSUFFICIENT EVIDENCE',
+        // Agent trust model — separate bands from project model
+        trustBand:       deriveAgentRiskLevel(trustScore, layerScores),
+        riskLevel:       deriveAgentRiskLevel(trustScore, layerScores),
+        recommendation:  deriveAgentRecommendation(trustScore, layerScores),
         signalsVerified: coverageMatch ? parseInt(coverageMatch[1]) : 0,
         signalsTotal:    coverageMatch ? parseInt(coverageMatch[2]) : 15,
-        layerScores: {
-          metadata: l1Match ? parseInt(l1Match[1]) : null,
-          web:      l2Match ? parseInt(l2Match[1]) : null,
-          live:     l3Match ? parseInt(l3Match[1]) : null,
+        layerScores,
+        // Agent-specific context
+        agentTrustModel: {
+          bands: '0-15 Critical | 16-35 Unverified | 36-55 Emerging | 56-75 Established | 76-100 Trusted',
+          note: 'Agent scores reflect ecosystem maturity. A new agent with a working endpoint is Emerging, not Critical.',
         },
         incidents:   [],
         lastAudited: new Date().toISOString(),
@@ -390,12 +571,43 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
   }
 });
 
-function deriveAgentRiskLevel(score) {
+// ════════════════════════════════════════════════════════════════════
+// AGENT TRUST MODEL
+// Agents are judged differently from projects.
+// A new agent with a working endpoint is NOT the same as FTX.
+// These bands reflect ecosystem maturity, not just raw score.
+//
+//  0-15   Critical      — failed live tests, or confirmed fraud
+//  16-35  Unverified    — no metadata, no web presence, no live test
+//  36-55  Emerging      — some signals but limited verification
+//  56-75  Established   — metadata + web presence OR live verified
+//  76-100 Trusted       — all three layers confirmed
+// ════════════════════════════════════════════════════════════════════
+function deriveAgentRiskLevel(score, layerScores) {
   if (score === null) return 'Unknown';
-  if (score >= 70) return 'Low';
-  if (score >= 50) return 'Medium';
-  if (score >= 30) return 'High';
+  const liveWorking = (layerScores?.live  || 0) > 0;
+  const webWorking  = (layerScores?.web   || 0) > 0;
+  const metaWorking = (layerScores?.metadata || 0) > 0;
+
+  // If live endpoint is working, agent is at minimum Emerging
+  // regardless of metadata availability
+  if (score >= 76) return 'Trusted';
+  if (score >= 56) return 'Established';
+  if (score >= 36 || (liveWorking && score >= 20)) return 'Emerging';
+  if (score >= 16 || webWorking || metaWorking)    return 'Unverified';
   return 'Critical';
+}
+
+function deriveAgentRecommendation(score, layerScores) {
+  const level = deriveAgentRiskLevel(score, layerScores);
+  switch (level) {
+    case 'Trusted':      return 'SUITABLE FOR PRODUCTION';
+    case 'Established':  return 'GENERALLY SUITABLE';
+    case 'Emerging':     return 'PROCEED WITH CAUTION';
+    case 'Unverified':   return 'LIMITED VERIFICATION';
+    case 'Critical':     return 'HIGH RISK';
+    default:             return 'INSUFFICIENT DATA';
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
