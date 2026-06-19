@@ -293,11 +293,38 @@ app.get('/compare/projects', requireApiKey, async (req, res) => {
       // Check cache first
       const cached = await getCachedReceipt(name);
       if (cached) {
+        const derivedRisk = (() => {
+          const s = cached.score;
+          if (cached.entity_type === 'agent') {
+            if (s >= 76) return 'Trusted';
+            if (s >= 56) return 'Established';
+            if (s >= 36) return 'Emerging';
+            if (s >= 16) return 'Unverified';
+            return 'Critical';
+          }
+          if (s >= 80) return 'Low';
+          if (s >= 65) return 'Low-Medium';
+          if (s >= 50) return 'Medium';
+          if (s >= 30) return 'High';
+          if (s <= 5)  return 'Critical';
+          return 'High';
+        })();
+        const derivedRec = (() => {
+          const s = cached.score;
+          if (!s) return 'Unknown';
+          if (s >= 85) return 'STRONGLY TRUSTED';
+          if (s >= 80) return 'TRUSTED';
+          if (s >= 65) return 'GENERALLY LEGITIMATE';
+          if (s >= 50) return 'MIXED SIGNALS';
+          if (s >= 30) return 'HIGH RISK';
+          if (s <= 5)  return 'CRITICAL RISK';
+          return 'HIGH RISK';
+        })();
         return {
           entity:          cached.entity_name,
           trustScore:      cached.score,
-          riskLevel:       cached.risk_level,
-          recommendation:  cached.recommendation || cached.risk_level,
+          riskLevel:       derivedRisk,
+          recommendation:  derivedRec,
           signalsVerified: cached.signals_verified,
           signalsTotal:    cached.signals_total,
           confidence:      cached.confidence || null,
@@ -460,8 +487,15 @@ app.get('/receipts/summary', async (req, res) => {
 
 app.get('/receipts/:entityId', async (req, res) => {
   try {
-    const receipts = await getTrustReceipts(req.params.entityId);
-    res.json({ entityId: req.params.entityId, receipts, count: receipts.length });
+    if (!supabase) return res.json({ entityId: req.params.entityId, receipts: [], count: 0 });
+    const { data, error } = await supabase
+      .from('trust_receipts')
+      .select('id, entity_type, entity_name, score, risk_level, signals_verified, signals_total, report, created_at')
+      .eq('entity_id', req.params.entityId.toLowerCase().trim())
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error) throw error;
+    res.json({ entityId: req.params.entityId, receipts: data || [], count: data?.length || 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -2403,4 +2403,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
   }
 
   throw new Error('Invalid type. Use "project" or "agent".');
-  } 
+}
