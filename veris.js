@@ -60,14 +60,36 @@ function parseReportMetrics(report) {
   const scoreMatch = report.match(/OVERALL SCORE:\s*(\d+)/i) ||
                      report.match(/LEGITIMACY:\s*(\d+)\/100/i) ||
                      report.match(/TRUST SCORE:\s*(\d+)/i);
-  const riskMatch = report.match(/RISK LEVEL:\s*(\w+)/i) ||
+
+  // Project reports use RECOMMENDATION:  ✓✓ STRONGLY TRUSTED  [Band: ...]
+  // Agent reports may use RECOMMENDATION or RELIABILITY in different formats
+  const riskMatch = report.match(/RECOMMENDATION:\s*[^\w]*([A-Z][A-Z\s]+?)(?:\s*\[|\n)/i) ||
+                    report.match(/RISK LEVEL:\s*(\w+)/i) ||
                     report.match(/RELIABILITY:\s*(\w+)/i);
-  const signalsMatch = report.match(/(\d+)\/(\d+) signals/i);
+
+  // Project reports: no "X/Y signals" phrase exists — use confirmed signal count (+N lines)
+  // Agent reports: "SIGNAL COVERAGE: X/Y" exists explicitly
+  const signalsMatch = report.match(/SIGNAL COVERAGE:\s*(\d+)\/(\d+)/i) ||
+                       report.match(/(\d+)\/(\d+)\s+signals/i);
+
+  let signalsVerified = 0, signalsTotal = 0;
+  if (signalsMatch) {
+    signalsVerified = parseInt(signalsMatch[1]);
+    signalsTotal    = parseInt(signalsMatch[2]);
+  } else {
+    // Fallback for project reports — count confirmed "+N  Label" signal lines directly
+    const confirmedLines = report.match(/^\s*\+\s*\d+\s+\S/gm) || [];
+    if (confirmedLines.length > 0) {
+      signalsVerified = confirmedLines.length;
+      signalsTotal    = 27; // standard project signal set size
+    }
+  }
+
   return {
-    score: scoreMatch ? parseInt(scoreMatch[1]) : null,
-    riskLevel: riskMatch ? riskMatch[1] : 'Unknown',
-    signalsVerified: signalsMatch ? parseInt(signalsMatch[1]) : 0,
-    signalsTotal: signalsMatch ? parseInt(signalsMatch[2]) : 0,
+    score:           scoreMatch ? parseInt(scoreMatch[1]) : null,
+    riskLevel:       riskMatch  ? riskMatch[1].trim()      : 'Unknown',
+    signalsVerified,
+    signalsTotal,
   };
 }
 
@@ -2404,3 +2426,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
 
   throw new Error('Invalid type. Use "project" or "agent".');
 }
+ 
