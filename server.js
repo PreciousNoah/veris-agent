@@ -800,6 +800,10 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
+// CROO ORDER HANDLER
+// ════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════
 // A2A ENRICHMENT — VERIS automatically calls ZERU for every project
 // audit and appends a visible research section to the delivered report.
 // This is not optional/hidden — it's baked into the standard audit flow.
@@ -815,7 +819,7 @@ async function fetchZeruEnrichment(entityName) {
       `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
       {
         headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
-        signal:  AbortSignal.timeout(45000),
+        signal:  AbortSignal.timeout(20000), // 20s — fail fast rather than risk gateway 502
       }
     );
     if (!res.ok) {
@@ -824,7 +828,7 @@ async function fetchZeruEnrichment(entityName) {
     const data = await res.json();
     return { available: true, data };
   } catch (err) {
-    return { available: false, reason: err.message };
+    return { available: false, reason: err.name === 'TimeoutError' ? 'ZERU timed out (20s)' : err.message };
   }
 }
 
@@ -873,12 +877,6 @@ This audit was independently enriched by a second autonomous agent
 on the CROO network — demonstrating agent-to-agent composability.
 ══════════════════════════════════════════════`;
 }
-
-// ════════════════════════════════════════════════════════════════════
-// CROO ORDER HANDLER
-// ════════════════════════════════════════════════════════════════════
-
-async function handleOrder(provider, orderId) {
   try {
     const order = await provider.getOrder(orderId);
     console.log('📋 Order received:', orderId);
@@ -1001,4 +999,4 @@ app.listen(PORT, async () => {
   if (STORE_SDK_KEY && STORE_SDK_KEY !== PROVIDER_SDK_KEY) {
     await startProvider(STORE_SDK_KEY, 'Agent Store');
   }
-}); 
+});
