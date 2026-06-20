@@ -251,7 +251,14 @@ app.post('/audit', async (req, res) => {
   }
 
   try {
-    const report = await runVERIS(requirements, REQUESTER_SDK_KEY);
+    let report = await runVERIS(requirements, REQUESTER_SDK_KEY);
+
+    // A2A enrichment — same flow as CROO orders
+    if (requirements.type === 'project' && requirements.name) {
+      const zeruResult = await fetchZeruEnrichment(requirements.name);
+      report += buildEnrichmentBlock(zeruResult, requirements.name);
+    }
+
     res.json({ report });
   } catch (err) {
     console.error('/audit error:', err.message);
@@ -796,7 +803,80 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 // CROO ORDER HANDLER
 // ════════════════════════════════════════════════════════════════════
 
-async function handleOrder(provider, orderId) {
+// ════════════════════════════════════════════════════════════════════
+// A2A ENRICHMENT — VERIS automatically calls ZERU for every project
+// audit and appends a visible research section to the delivered report.
+// This is not optional/hidden — it's baked into the standard audit flow.
+// ════════════════════════════════════════════════════════════════════
+
+async function fetchZeruEnrichment(entityName) {
+  const zeruUrl = process.env.ZERU_API_URL;
+  if (!zeruUrl) {
+    return { available: false, reason: 'ZERU_API_URL not configured' };
+  }
+  try {
+    const res = await fetch(
+      `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
+      {
+        headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
+        signal:  AbortSignal.timeout(45000),
+      }
+    );
+    if (!res.ok) {
+      return { available: false, reason: `ZERU returned ${res.status}` };
+    }
+    const data = await res.json();
+    return { available: true, data };
+  } catch (err) {
+    return { available: false, reason: err.message };
+  }
+}
+
+function buildEnrichmentBlock(zeruResult, entityName) {
+  if (!zeruResult.available) {
+    return `
+
+══════════════════════════════════════════════
+A2A RESEARCH ENRICHMENT
+Source: ZERU Research Agent
+Status: Unavailable (${zeruResult.reason})
+══════════════════════════════════════════════
+DATA SOURCES
+  ✓ VERIS Trust Engine
+  ✗ ZERU Research Agent (unreachable)
+══════════════════════════════════════════════`;
+  }
+
+  const d = zeruResult.data;
+  const risksText = (d.risks || []).slice(0, 5).map(r => `  • ${r}`).join('\n') || '  • None identified';
+  const compText  = (d.competitors || []).slice(0, 2).map(c => `  • ${c}`).join('\n') || '  • Not identified';
+
+  return `
+
+══════════════════════════════════════════════
+A2A RESEARCH ENRICHMENT
+Source: ZERU Research Agent
+══════════════════════════════════════════════
+SUMMARY
+${(d.summary || 'No summary available').trim()}
+
+KEY FINDINGS (Risks Identified)
+${risksText}
+
+MARKET CONTEXT
+${compText}
+
+SENTIMENT: ${(d.sentiment || 'neutral').toUpperCase()}
+══════════════════════════════════════════════
+DATA SOURCES
+
+VERIS → Trust Analysis (legitimacy, maturity, evidence verification)
+ZERU  → Research Intelligence (market context, risk signals, sentiment)
+
+This audit was independently enriched by a second autonomous agent
+on the CROO network — demonstrating agent-to-agent composability.
+══════════════════════════════════════════════`;
+}
   try {
     const order = await provider.getOrder(orderId);
     console.log('📋 Order received:', orderId);
@@ -825,7 +905,16 @@ async function handleOrder(provider, orderId) {
 
     console.log('📋 Parsed requirements:', JSON.stringify(requirements));
 
-    const report   = await runVERIS(requirements, REQUESTER_SDK_KEY);
+    let report = await runVERIS(requirements, REQUESTER_SDK_KEY);
+
+    // A2A enrichment — automatically call ZERU for project audits
+    if (requirements.type === 'project' && requirements.name) {
+      console.log(`  🔗 A2A: calling ZERU for research enrichment on ${requirements.name}...`);
+      const zeruResult = await fetchZeruEnrichment(requirements.name);
+      console.log(`  🔗 A2A: ZERU ${zeruResult.available ? 'responded' : `unavailable (${zeruResult.reason})`}`);
+      report += buildEnrichmentBlock(zeruResult, requirements.name);
+    }
+
     const delivery = await provider.deliverOrder(orderId, {
       deliverableType: DeliverableType.Text,
       deliverableText: report,
@@ -911,3 +1000,4 @@ app.listen(PORT, async () => {
     await startProvider(STORE_SDK_KEY, 'Agent Store');
   }
 });
+ 
