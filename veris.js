@@ -1423,6 +1423,14 @@ export async function runProjectDueDiligence(project) {
   );
   const allSources   = searchResults.flatMap(r => r.sources);
   const totalSources = searchResults.reduce((a,r) => a+r.sourceCount, 0);
+  // Distinguish "search infrastructure failed" from "entity genuinely has no evidence" —
+  // a 0-source result across ALL queries almost always means a search API quota/outage,
+  // not that the entity is suspicious. Ground truth entities are exempt since their
+  // signals come from the static ground_truth.js dataset, not live search.
+  const searchInfraFailed = totalSources === 0 && !ENTITY_GROUND_TRUTH[project.name];
+  if (searchInfraFailed) {
+    console.warn(`  \ud83d\uded1 SEARCH INFRASTRUCTURE FAILURE: 0 sources returned across ${Object.keys(queries).length} queries \u2014 likely Tavily quota/outage, not an entity trust issue`);
+  }
   const combinedText = searchResults.filter(r => r.text).map(r => `=== ${r.key.toUpperCase()} ===\n${r.text}`).join('\n\n');
   console.log('  → Extracting evidence...');
   const rawEvidence = await extractEvidence(combinedText, project.name, template.label);
@@ -1432,7 +1440,7 @@ export async function runProjectDueDiligence(project) {
   evidence = applyConfidenceGate(evidence);
   evidence = validateSourceQuality(evidence, project.name);
   const { confirmed: hardEvents, unverified: unverifiedHard } = checkHardEvents(evidence);
-  const insufficientEvidence = evidence._insufficient_evidence || false;
+  const insufficientEvidence = evidence._insufficient_evidence || searchInfraFailed || false;
   console.log('  → Scoring...');
   const legit   = computeLegitimacyScore(evidence, template, project.name);
   const mat     = computeCleanMaturityScore(evidence);
@@ -1488,7 +1496,9 @@ export async function runProjectDueDiligence(project) {
     ? `\n⛔ HARD TRUST EVENT — All scores overridden to 0\n` +
       hardEvents.map(e=>`   ${e.label}\n   Source: ${e.citation.source_url}\n   Quote:  "${e.citation.quote}"`).join('\n')
     : '';
-  const insufficientWarn = insufficientEvidence
+  const insufficientWarn = searchInfraFailed
+    ? `\n🛑 SEARCH INFRASTRUCTURE UNAVAILABLE — Scores are N/A, not a trust assessment\n   Live search returned 0 sources across all ${Object.keys(queries).length} queries.\n   This is almost always a search API quota limit or outage — NOT a finding about ${project.name}.\n   Re-run this audit once search access is restored.`
+    : insufficientEvidence
     ? `\n⚠  INSUFFICIENT EVIDENCE — Scores are N/A, not 0\n   Missing mandatory signals: ${evidence._missing_mandatory?.join(', ') || 'all'}\n   This does NOT mean the project is illegitimate. It means VERIS cannot verify it.`
     : '';
   const lowConfWarn = !insufficientEvidence && confidence < 0.40
@@ -2426,4 +2436,3 @@ export async function runVERIS(requirements, requesterSdkKey) {
 
   throw new Error('Invalid type. Use "project" or "agent".');
 }
- 
