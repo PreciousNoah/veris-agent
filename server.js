@@ -800,6 +800,10 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
+// CROO ORDER HANDLER
+// ════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════
 // A2A ENRICHMENT — VERIS automatically calls ZERU for every project
 // audit and appends a visible research section to the delivered report.
 // This is not optional/hidden — it's baked into the standard audit flow.
@@ -815,7 +819,7 @@ async function fetchZeruEnrichment(entityName) {
       `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
       {
         headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
-        signal:  AbortSignal.timeout(20000),
+        signal:  AbortSignal.timeout(20000), // 20s — fail fast rather than risk gateway 502
       }
     );
     if (!res.ok) {
@@ -873,12 +877,6 @@ This audit was independently enriched by a second autonomous agent
 on the CROO network — demonstrating agent-to-agent composability.
 ══════════════════════════════════════════════`;
 }
-
-// ════════════════════════════════════════════════════════════════════
-// CROO ORDER HANDLER
-// ════════════════════════════════════════════════════════════════════
-
-async function handleOrder(provider, orderId) {
   try {
     const order = await provider.getOrder(orderId);
     console.log('📋 Order received:', orderId);
@@ -893,8 +891,29 @@ async function handleOrder(provider, orderId) {
 
     let requirements = {};
     if (rawRequirement) {
-      const parsed = parseBody(rawRequirement);
-      if (parsed && typeof parsed === 'object') {
+      let parsed = parseBody(rawRequirement);
+
+      // CROO sometimes double-wraps: { "text": "{ \"type\": \"project\", ... }" }
+      // Unwrap as many layers as needed until we hit the real requirement object
+      // or run out of string-wrapped layers (max 3 to avoid infinite loops).
+      let unwrapDepth = 0;
+      while (parsed && typeof parsed === 'object' && typeof parsed.text === 'string' && unwrapDepth < 3) {
+        const inner = parseBody(parsed.text);
+        if (inner && typeof inner === 'object') {
+          parsed = inner;
+        } else {
+          break;
+        }
+        unwrapDepth++;
+      }
+
+      if (parsed && typeof parsed === 'object' && parsed.type) {
+        requirements = parsed;
+        if (unwrapDepth > 0) {
+          console.log(`  📦 Unwrapped ${unwrapDepth} layer(s) of CROO text-wrapping`);
+        }
+      } else if (parsed && typeof parsed === 'object') {
+        // Got an object but no recognizable 'type' field — still better than nothing
         requirements = parsed;
       } else {
         // Plain text — treat as project name
@@ -1002,3 +1021,4 @@ app.listen(PORT, async () => {
     await startProvider(STORE_SDK_KEY, 'Agent Store');
   }
 });
+ 
