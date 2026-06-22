@@ -1057,4 +1057,4 @@ app.listen(PORT, async () => {
   if (STORE_SDK_KEY && STORE_SDK_KEY !== PROVIDER_SDK_KEY) {
     await startProvider(STORE_SDK_KEY, 'Agent Store');
   }
-}); 
+});
