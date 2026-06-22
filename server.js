@@ -607,10 +607,10 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
 
     let riskLevel = 'Unknown';
     if (score !== null) {
-      if (score >= 80)      riskLevel = 'Low';
-      else if (score >= 65) riskLevel = 'Low-Medium';
-      else if (score >= 50) riskLevel = 'Medium';
-      else if (score >= 30) riskLevel = 'High';
+      if (score >= 70)      riskLevel = 'Low';
+      else if (score >= 55) riskLevel = 'Low-Medium';
+      else if (score >= 40) riskLevel = 'Medium';
+      else if (score >= 20) riskLevel = 'High';
       else                  riskLevel = 'Critical';
     }
     if (incidents.length > 0) riskLevel = 'Critical';
@@ -1057,4 +1057,4 @@ app.listen(PORT, async () => {
   if (STORE_SDK_KEY && STORE_SDK_KEY !== PROVIDER_SDK_KEY) {
     await startProvider(STORE_SDK_KEY, 'Agent Store');
   }
-});
+}); 
