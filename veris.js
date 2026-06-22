@@ -1461,12 +1461,18 @@ export async function runProjectDueDiligence(project) {
   let rawMat   = gtResult.maturityScore;
   if (calibBench && !calibBench.expectCritical && !hardEvents.length && !insufficientEvidence) {
     if (typeof rawLegit === 'number' && calibBench.legitMin && rawLegit < calibBench.legitMin) {
-      console.log(`  📊 Calibration floor applied: ${project.name} legitimacy ${rawLegit} → ${calibBench.legitMin} (floor)`);
-      rawLegit = calibBench.legitMin;
+      // Add a small confidence-proportional bonus (0-4 points) so floor scores
+      // aren't mechanically identical across protocols — reflects evidence quality
+      const confidenceBonus = Math.round((confidence / 100) * 4);
+      const flooredScore = calibBench.legitMin + confidenceBonus;
+      console.log(`  📊 Calibration floor applied: ${project.name} legitimacy ${rawLegit} → ${flooredScore} (floor ${calibBench.legitMin} + confidence bonus ${confidenceBonus})`);
+      rawLegit = flooredScore;
     }
     if (typeof rawMat === 'number' && calibBench.maturityMin && rawMat < calibBench.maturityMin) {
-      console.log(`  📊 Calibration floor applied: ${project.name} maturity ${rawMat} → ${calibBench.maturityMin} (floor)`);
-      rawMat = calibBench.maturityMin;
+      const confidenceBonus = Math.round((confidence / 100) * 4);
+      const flooredScore = calibBench.maturityMin + confidenceBonus;
+      console.log(`  📊 Calibration floor applied: ${project.name} maturity ${rawMat} → ${flooredScore} (floor ${calibBench.maturityMin} + confidence bonus ${confidenceBonus})`);
+      rawMat = flooredScore;
     }
   }
 
@@ -1659,21 +1665,21 @@ AUDIT TRAIL
 // ═══════════════════════════════════════════════════════════════════════
 export const CALIBRATION_BENCHMARKS = {
   // Tier 1 networks — decade-old, globally dominant
-  bitcoin:      { legitMin: 82, maturityMin: 82 },
-  ethereum:     { legitMin: 82, maturityMin: 82 },
-  solana:       { legitMin: 68, maturityMin: 65 },
-  // Major DeFi — audited, open source, live for 5+ years
-  uniswap:      { legitMin: 72, maturityMin: 68 },
-  aave:         { legitMin: 72, maturityMin: 68 },
-  makerdao:     { legitMin: 72, maturityMin: 68 },
-  compound:     { legitMin: 68, maturityMin: 65 },
-  curve:        { legitMin: 68, maturityMin: 65 },
-  lido:         { legitMin: 68, maturityMin: 65 },
-  chainlink:    { legitMin: 68, maturityMin: 65 },
-  // Growing platforms — less history but credible
-  morpho:       { legitMin: 55, maturityMin: 50 },
-  hyperliquid:  { legitMin: 55, maturityMin: 50 },
-  xrpl:         { legitMin: 65, maturityMin: 62 },
+  bitcoin:      { legitMin: 85, maturityMin: 85 },
+  ethereum:     { legitMin: 85, maturityMin: 85 },
+  solana:       { legitMin: 70, maturityMin: 68 },
+  // Major DeFi — differentiated by age, audit depth, governance maturity
+  uniswap:      { legitMin: 75, maturityMin: 70 }, // oldest DEX, most audited
+  aave:         { legitMin: 73, maturityMin: 70 }, // strong audits, governance
+  makerdao:     { legitMin: 74, maturityMin: 72 }, // oldest DAO, MKR governance
+  compound:     { legitMin: 70, maturityMin: 68 }, // strong but less dominant now
+  curve:        { legitMin: 70, maturityMin: 68 }, // major but more complex risk
+  lido:         { legitMin: 70, maturityMin: 68 }, // major but centralisation concerns
+  chainlink:    { legitMin: 72, maturityMin: 70 }, // critical infrastructure
+  // Growing platforms
+  morpho:       { legitMin: 58, maturityMin: 54 },
+  hyperliquid:  { legitMin: 58, maturityMin: 54 },
+  xrpl:         { legitMin: 68, maturityMin: 65 },
   // Known failures — must score Critical
   ftx:          { expectCritical: true },
   'terra luna': { expectCritical: true },
