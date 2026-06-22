@@ -800,6 +800,10 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
+// CROO ORDER HANDLER
+// ════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════
 // A2A ENRICHMENT — VERIS automatically calls ZERU for every project
 // audit and appends a visible research section to the delivered report.
 // This is not optional/hidden — it's baked into the standard audit flow.
@@ -873,12 +877,6 @@ This audit was independently enriched by a second autonomous agent
 on the CROO network — demonstrating agent-to-agent composability.
 ══════════════════════════════════════════════`;
 }
-
-// ════════════════════════════════════════════════════════════════════
-// CROO ORDER HANDLER
-// ════════════════════════════════════════════════════════════════════
-
-async function handleOrder(provider, orderId) {
   try {
     const order = await provider.getOrder(orderId);
     console.log('📋 Order received:', orderId);
@@ -895,36 +893,57 @@ async function handleOrder(provider, orderId) {
     if (rawRequirement) {
       let parsed = parseBody(rawRequirement);
 
-      // CROO sometimes double-wraps: { "text": "{ \"type\": \"project\", ... }" }
-      // Unwrap as many layers as needed until we hit the real requirement object
-      // or run out of string-wrapped layers (max 3 to avoid infinite loops).
+      // CROO wraps payloads in layers. Known shapes observed in production:
+      // Layer 1: { "text": "<json string>" }
+      // Layer 2: { "requirements": { "type": "project", ... } }
+      // Layer 3: { "type": "project", "name": "..." }  ← actual requirement
+      // Unwrap until we hit an object with a recognizable "type" field.
+
       let unwrapDepth = 0;
-      while (parsed && typeof parsed === 'object' && typeof parsed.text === 'string' && unwrapDepth < 3) {
-        const inner = parseBody(parsed.text);
-        if (inner && typeof inner === 'object') {
-          parsed = inner;
-        } else {
-          break;
+      while (parsed && typeof parsed === 'object' && unwrapDepth < 5) {
+        // If it has a type field directly, we're done
+        if (parsed.type) break;
+
+        // Unwrap { text: "<json string>" }
+        if (typeof parsed.text === 'string') {
+          const inner = parseBody(parsed.text);
+          if (inner && typeof inner === 'object') { parsed = inner; unwrapDepth++; continue; }
         }
-        unwrapDepth++;
+
+        // Unwrap { requirements: { type: "project", ... } }
+        if (parsed.requirements && typeof parsed.requirements === 'object') {
+          parsed = parsed.requirements; unwrapDepth++; continue;
+        }
+
+        // Unwrap { requirements: "<json string>" }
+        if (typeof parsed.requirements === 'string') {
+          const inner = parseBody(parsed.requirements);
+          if (inner && typeof inner === 'object') { parsed = inner; unwrapDepth++; continue; }
+        }
+
+        // Nothing left to unwrap
+        break;
+      }
+
+      if (unwrapDepth > 0) {
+        console.log(`  📦 Unwrapped ${unwrapDepth} layer(s) of CROO wrapping`);
       }
 
       if (parsed && typeof parsed === 'object' && parsed.type) {
         requirements = parsed;
-        if (unwrapDepth > 0) {
-          console.log(`  📦 Unwrapped ${unwrapDepth} layer(s) of CROO text-wrapping`);
-        }
-      } else if (parsed && typeof parsed === 'object') {
-        // Got an object but no recognizable 'type' field — still better than nothing
-        requirements = parsed;
+      } else if (parsed && typeof parsed === 'object' && parsed.name) {
+        // Has name but no type — assume project
+        requirements = { type: 'project', ...parsed };
       } else {
-        // Plain text — treat as project name
+        // Last resort: plain text → treat as project name
         requirements = { type: 'project', name: String(rawRequirement).trim() };
       }
     }
 
-    if (!requirements.type)                                    requirements.type = 'project';
-    if (requirements.type === 'project' && !requirements.name) requirements.name = String(rawRequirement || 'Unknown').trim();
+    if (!requirements.type) requirements.type = 'project';
+    if (requirements.type === 'project' && !requirements.name) {
+      requirements.name = String(rawRequirement || 'Unknown').trim();
+    }
 
     console.log('📋 Parsed requirements:', JSON.stringify(requirements));
 
@@ -1022,4 +1041,4 @@ app.listen(PORT, async () => {
   if (STORE_SDK_KEY && STORE_SDK_KEY !== PROVIDER_SDK_KEY) {
     await startProvider(STORE_SDK_KEY, 'Agent Store');
   }
-}); 
+});
