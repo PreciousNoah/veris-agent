@@ -1460,18 +1460,18 @@ export async function runProjectDueDiligence(project) {
   let rawLegit = gtResult.legitimacyScore;
   let rawMat   = gtResult.maturityScore;
   if (calibBench && !calibBench.expectCritical && !hardEvents.length && !insufficientEvidence) {
+    // Confidence isn't computed yet at this point — estimate from source count
+    // 0 sources = 0 bonus, 45+ sources = max 4 bonus, proportional in between
+    const sourceRatio = Math.min(totalSources / 45, 1);
+    const confidenceBonus = Math.round(sourceRatio * 4);
     if (typeof rawLegit === 'number' && calibBench.legitMin && rawLegit < calibBench.legitMin) {
-      // Add a small confidence-proportional bonus (0-4 points) so floor scores
-      // aren't mechanically identical across protocols — reflects evidence quality
-      const confidenceBonus = Math.round((confidence / 100) * 4);
       const flooredScore = calibBench.legitMin + confidenceBonus;
-      console.log(`  📊 Calibration floor applied: ${project.name} legitimacy ${rawLegit} → ${flooredScore} (floor ${calibBench.legitMin} + confidence bonus ${confidenceBonus})`);
+      console.log(`  📊 Calibration floor applied: ${project.name} legitimacy ${rawLegit} → ${flooredScore} (floor ${calibBench.legitMin} + source bonus ${confidenceBonus})`);
       rawLegit = flooredScore;
     }
     if (typeof rawMat === 'number' && calibBench.maturityMin && rawMat < calibBench.maturityMin) {
-      const confidenceBonus = Math.round((confidence / 100) * 4);
       const flooredScore = calibBench.maturityMin + confidenceBonus;
-      console.log(`  📊 Calibration floor applied: ${project.name} maturity ${rawMat} → ${flooredScore} (floor ${calibBench.maturityMin} + confidence bonus ${confidenceBonus})`);
+      console.log(`  📊 Calibration floor applied: ${project.name} maturity ${rawMat} → ${flooredScore} (floor ${calibBench.maturityMin} + source bonus ${confidenceBonus})`);
       rawMat = flooredScore;
     }
   }
@@ -2467,3 +2467,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
 
   throw new Error('Invalid type. Use "project" or "agent".');
 }
+ 
