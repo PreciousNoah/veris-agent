@@ -408,7 +408,21 @@ app.get('/receipts', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(50);
     if (error) throw error;
-    res.json({ receipts: data || [], count: data?.length || 0 });
+
+    // Filter out junk entity names from old malformed CROO orders
+    const clean = (name) => {
+      if (!name) return false;
+      if (name.startsWith('{')) return false;
+      if (name.startsWith('"')) return false;
+      if (name.length > 80) return false;
+      if (name.includes('\\')) return false;
+      if (name.includes('"type"')) return false;
+      if (name.includes('requirements')) return false;
+      return true;
+    };
+
+    const receipts = (data || []).filter(r => clean(r.entity_name));
+    res.json({ receipts, count: receipts.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
