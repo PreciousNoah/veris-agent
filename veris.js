@@ -1809,21 +1809,24 @@ function detectCategory(description = '', name = '') {
 // AGENT DUE DILIGENCE — VERIS
 // ═══════════════════════════════════════════════════════════════════════
 const AGENT_SIGNALS = {
-  agent_listed:       { layer: 1, label: 'Agent listed on CROO store',    points: 10 },
-  service_described:  { layer: 1, label: 'Service has clear description', points: 8  },
-  price_set:          { layer: 1, label: 'Pricing is defined',            points: 5  },
-  sla_set:            { layer: 1, label: 'SLA / delivery time defined',   points: 5  },
-  category_tagged:    { layer: 1, label: 'Category/tags configured',      points: 4  },
-  currently_online:   { layer: 1, label: 'Agent is currently online',     points: 8  },
-  web_presence:       { layer: 2, label: 'Web presence / mentions found', points: 8  },
-  creator_findable:   { layer: 2, label: 'Creator/developer identifiable',points: 7  },
-  github_found:       { layer: 2, label: 'GitHub repository found',       points: 7  },
-  media_mentioned:    { layer: 2, label: 'Referenced in public media',    points: 5  },
-  endpoint_reachable: { layer: 3, label: 'Endpoint reachable',            points: 10 },
-  responds_to_prompts:{ layer: 3, label: 'Responds to test prompts',      points: 12 },
-  response_quality:   { layer: 3, label: 'Response quality adequate',     points: 8  },
-  order_completed:    { layer: 3, label: 'CROO order completed',          points: 15 },
-  delivery_quality:   { layer: 3, label: 'Delivered output quality',      points: 8  },
+  // Layer 1 — CROO store metadata (always 0, SDK has no lookup method)
+  agent_listed:       { layer: 1, label: 'Agent listed on CROO store',    points: 5  },
+  service_described:  { layer: 1, label: 'Service has clear description', points: 5  },
+  price_set:          { layer: 1, label: 'Pricing is defined',            points: 3  },
+  sla_set:            { layer: 1, label: 'SLA / delivery time defined',   points: 3  },
+  category_tagged:    { layer: 1, label: 'Category/tags configured',      points: 2  },
+  currently_online:   { layer: 1, label: 'Agent is currently online',     points: 5  },
+  // Layer 2 — Web intelligence
+  web_presence:       { layer: 2, label: 'Web presence / mentions found', points: 10 },
+  creator_findable:   { layer: 2, label: 'Creator/developer identifiable',points: 10 },
+  github_found:       { layer: 2, label: 'GitHub repository found',       points: 10 },
+  media_mentioned:    { layer: 2, label: 'Referenced in public media',    points: 7  },
+  // Layer 3 — Live verification (primary trust signal for agents)
+  endpoint_reachable: { layer: 3, label: 'Endpoint reachable',            points: 20 },
+  responds_to_prompts:{ layer: 3, label: 'Responds to test prompts',      points: 25 },
+  response_quality:   { layer: 3, label: 'Response quality adequate',     points: 20 },
+  order_completed:    { layer: 3, label: 'CROO order completed',          points: 20 },
+  delivery_quality:   { layer: 3, label: 'Delivered output quality',      points: 15 },
 };
 
 const CROO_ECOSYSTEM_GAPS = [
@@ -2225,11 +2228,15 @@ export async function runAgentAudit(agentInfo, requesterSdkKey, category = 'gene
   const web = await collectWebIntelligence(agentInfo, meta, tavilyClientRef || tavilyClient);
   const live = await runLiveVerification(agentInfo, pack, requesterSdkKey);
   const coverage = buildSignalCoverage(meta, web, live);
+
+  // CROO SDK has no agent metadata lookup method (confirmed via SDK inspection).
+  // Layer 1 (metadata) always returns 0 — do not let a missing API penalize real agents.
+  // Reweight: live verification is the strongest signal; web presence secondary.
   const layerWeights = live.tested
-    ? { meta: 0.30, web: 0.20, live: 0.50 }
+    ? { meta: 0.10, web: 0.20, live: 0.70 }  // live endpoint proven — heavily weight it
     : web.coverage !== 'none'
-    ? { meta: 0.55, web: 0.45, live: 0 }
-    : { meta: 1.0, web: 0, live: 0 };
+    ? { meta: 0.20, web: 0.80, live: 0 }      // no live test — web presence is all we have
+    : { meta: 1.0,  web: 0,    live: 0 };     // nothing found — meta fallback (will score low)
   const overallScore = Math.round(
     meta.score * layerWeights.meta +
     web.score * layerWeights.web +
@@ -2467,4 +2474,3 @@ export async function runVERIS(requirements, requesterSdkKey) {
 
   throw new Error('Invalid type. Use "project" or "agent".');
 }
- 
