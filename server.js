@@ -253,10 +253,19 @@ app.post('/audit', async (req, res) => {
   try {
     let report = await runVERIS(requirements, REQUESTER_SDK_KEY);
 
-    // A2A enrichment — same flow as CROO orders
+    // A2A enrichment — ZERU research then SENTINEL decision
     if (requirements.type === 'project' && requirements.name) {
+      // Step 1: ZERU research
       const zeruResult = await fetchZeruEnrichment(requirements.name);
       report += buildEnrichmentBlock(zeruResult, requirements.name);
+
+      // Step 2: SENTINEL decision (uses VERIS score + ZERU sentiment/risks)
+      const scoreMatch = report.match(/LEGITIMACY:\s+(\d+)\/100/i);
+      const confMatch  = report.match(/CONFIDENCE:.*?(\d+)%/);
+      const trustScore = scoreMatch ? parseInt(scoreMatch[1]) : null;
+      const confidence = confMatch  ? parseInt(confMatch[1])  : 50;
+      const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult);
+      report += buildSentinelBlock(sentinelResult);
     }
 
     res.json({ report });
@@ -814,9 +823,7 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// A2A ENRICHMENT — VERIS automatically calls ZERU for every project
-// audit and appends a visible research section to the delivered report.
-// This is not optional/hidden — it's baked into the standard audit flow.
+// A2A ENRICHMENT FUNCTIONS
 // ════════════════════════════════════════════════════════════════════
 
 async function fetchZeruEnrichment(entityName) {
@@ -829,7 +836,7 @@ async function fetchZeruEnrichment(entityName) {
       `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
       {
         headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
-        signal:  AbortSignal.timeout(20000), // 20s — fail fast rather than risk gateway 502
+        signal:  AbortSignal.timeout(20000),
       }
     );
     if (!res.ok) {
@@ -839,6 +846,28 @@ async function fetchZeruEnrichment(entityName) {
     return { available: true, data };
   } catch (err) {
     return { available: false, reason: err.name === 'TimeoutError' ? 'ZERU timed out (20s)' : err.message };
+  }
+}
+
+async function fetchSentinelDecision(trustScore, confidence, zeruResult) {
+  const sentinelUrl = process.env.SENTINEL_API_URL;
+  if (!sentinelUrl) return { available: false, reason: 'SENTINEL_API_URL not configured' };
+
+  const sentiment   = zeruResult?.data?.sentiment   || 'neutral';
+  const riskFactors = zeruResult?.data?.risks        || [];
+
+  try {
+    const res = await fetch(`${sentinelUrl}/decide`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ trustScore, confidence, sentiment, riskFactors, incidents: [] }),
+      signal:  AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return { available: false, reason: `SENTINEL returned ${res.status}` };
+    const data = await res.json();
+    return { available: true, data };
+  } catch (err) {
+    return { available: false, reason: err.name === 'TimeoutError' ? 'SENTINEL timed out' : err.message };
   }
 }
 
@@ -885,6 +914,57 @@ ZERU  → Research Intelligence (market context, risk signals, sentiment)
 
 This audit was independently enriched by a second autonomous agent
 on the CROO network — demonstrating agent-to-agent composability.
+══════════════════════════════════════════════`;
+}
+
+function buildSentinelBlock(sentinelResult) {
+  if (!sentinelResult.available) {
+    return `
+
+══════════════════════════════════════════════
+SENTINEL DECISION
+Source: SENTINEL — Decision Intelligence Agent
+Status: Unavailable (${sentinelResult.reason})
+══════════════════════════════════════════════
+A2A CHAIN
+  ZERU     → Research & Intelligence
+  VERIS    → Trust Verification & Scoring
+  SENTINEL → Compliance Decision (unavailable)
+══════════════════════════════════════════════`;
+  }
+
+  const d = sentinelResult.data;
+  const symbol = {
+    'PROCEED':              '✅',
+    'PROCEED WITH CAUTION': '⚠️',
+    'HIGH RISK':            '🔴',
+    'AVOID':                '⛔',
+    'INSUFFICIENT DATA':    '❓',
+  }[d.verdict] || '—';
+
+  return `
+
+══════════════════════════════════════════════
+SENTINEL DECISION
+Source: SENTINEL — Decision Intelligence Agent
+══════════════════════════════════════════════
+VERDICT:  ${symbol}  ${d.verdict}
+
+Risk Class:     ${d.riskClass}
+Confidence:     ${d.confidence}
+Review Period:  ${d.reviewPeriod}
+
+REASONING
+${d.reason}
+══════════════════════════════════════════════
+A2A CHAIN
+
+ZERU     → Research & Intelligence
+VERIS    → Trust Verification & Scoring
+SENTINEL → Compliance Decision ◄
+
+This audit was processed by three autonomous agents
+cooperating on the CROO network.
 ══════════════════════════════════════════════`;
 }
 
@@ -965,12 +1045,21 @@ async function handleOrder(provider, orderId) {
 
     let report = await runVERIS(requirements, REQUESTER_SDK_KEY);
 
-    // A2A enrichment — automatically call ZERU for project audits
+    // A2A enrichment — ZERU then SENTINEL
     if (requirements.type === 'project' && requirements.name) {
-      console.log(`  🔗 A2A: calling ZERU for research enrichment on ${requirements.name}...`);
+      console.log(`  🔗 A2A: calling ZERU for ${requirements.name}...`);
       const zeruResult = await fetchZeruEnrichment(requirements.name);
-      console.log(`  🔗 A2A: ZERU ${zeruResult.available ? 'responded' : `unavailable (${zeruResult.reason})`}`);
+      console.log(`  🔗 ZERU: ${zeruResult.available ? 'responded' : zeruResult.reason}`);
       report += buildEnrichmentBlock(zeruResult, requirements.name);
+
+      console.log(`  🔗 A2A: calling SENTINEL for compliance decision...`);
+      const scoreMatch = report.match(/LEGITIMACY:\s+(\d+)\/100/i);
+      const confMatch  = report.match(/CONFIDENCE:.*?(\d+)%/);
+      const trustScore = scoreMatch ? parseInt(scoreMatch[1]) : null;
+      const confidence = confMatch  ? parseInt(confMatch[1])  : 50;
+      const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult);
+      console.log(`  🔗 SENTINEL: ${sentinelResult.available ? sentinelResult.data?.verdict : sentinelResult.reason}`);
+      report += buildSentinelBlock(sentinelResult);
     }
 
     const delivery = await provider.deliverOrder(orderId, {
