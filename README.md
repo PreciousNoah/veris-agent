@@ -1,51 +1,97 @@
 # VERIS — Trust Infrastructure for the Agent Economy
 
-Autonomous trust verification agent built on CROO protocol.
-Audits Web3 projects and AI agents via live A2A CROO orders.
+> "Before you commit, VERIS verifies."
 
-## What it does
-# VERIS — Trust Infrastructure for the Agent Economy
+VERIS is an autonomous three-agent due diligence system built on CROO protocol (Base Mainnet). It audits Web3 projects and AI agents, delivering verified trust scores, research intelligence, and compliance decisions — entirely through agent-to-agent workflows.
 
-VERIS is an autonomous trust and due diligence agent built on CROO protocol (Base Mainnet). It helps buyers make informed trust decisions before spending money on a Web3 project or AI agent.
+**Live on CROO Agent Store → [agent.croo.network](https://agent.croo.network)**
 
-> **"Before you commit, VERIS verifies."**
+---
 
-Live on CROO Agent Store → [agent.croo.network](https://agent.croo.network)
+## The Three-Agent System
+
+VERIS is not a single agent. It is a due diligence network composed of three cooperating autonomous agents:
+
+```
+Buyer Order (CROO)
+       ↓
+   VERIS — Trust Verification & Scoring
+       ↓
+    ZERU — Research Intelligence
+       ↓
+  SENTINEL — Compliance Decision
+       ↓
+  Combined Report Delivered On-Chain
+```
+
+| Agent | Role | Deployed |
+|---|---|---|
+| **VERIS** | Trust verification, legitimacy scoring, evidence collection | Railway |
+| **ZERU** | Market research, risk intelligence, sentiment analysis | Render |
+| **SENTINEL** | Compliance decision engine, recommended actions, review periods | Render |
+
+Every audit placed through CROO automatically triggers all three agents. The buyer receives one unified report containing trust analysis, research enrichment, and a final compliance verdict.
 
 ---
 
 ## What VERIS Does
 
 ### Project Due Diligence
-Submit any Web3 project. VERIS runs multi-query web research across 5 trust dimensions — Team Transparency, Documentation Quality, Social Credibility, Development Activity, and Risk Flags — then returns a scored report with legitimacy score, maturity score, confidence rating, and a clear RECOMMENDATION verdict.
+Submit any Web3 project. VERIS runs multi-query web research across 4 trust dimensions:
+
+- **Identity** — Founders, team, LinkedIn, verifiable track record
+- **Transparency** — Whitepaper, technical docs, roadmap, tokenomics, governance
+- **Verification** — GitHub activity, open source status, security audits, live product
+- **Reputation** — Media coverage, fraud history, community signals
+
+Returns a scored report with legitimacy score (0–100), maturity score (0–100), confidence rating, signal-by-signal evidence breakdown with source URLs, and a clear RECOMMENDATION verdict.
 
 ### Agent Due Diligence
 Submit any CROO agent ID. VERIS investigates across three verification layers:
-- **Layer 1 — Metadata:** What CROO exposes (listing, description, pricing, SLA, online status)
-- **Layer 2 — Web Intelligence:** Public web search for creator identity, GitHub, media mentions
-- **Layer 3 — Live Verification:** Direct endpoint probe and optional CROO order test
 
-Outputs a signal coverage report showing exactly which signals were confirmed, which were not tested, and which are unavailable due to current CROO ecosystem limitations.
+- **Layer 1 — Metadata**: Agent listing, description, pricing, SLA, online status
+- **Layer 2 — Web Intelligence**: Creator identity, GitHub, media mentions, web presence
+- **Layer 3 — Live Verification**: Direct endpoint probe and response quality testing
 
-### Trust Compare *(new)*
-Compare multiple agents side-by-side. Submit 2–5 agent IDs and VERIS runs parallel due diligence, outputs a comparison table, and recommends the best trust-adjusted option.
+Outputs a trust band classification: `Critical | Unverified | Emerging | Established | Trusted`
 
-### Trust Receipts *(new)*
-Every audit is stored as a permanent trust receipt in Supabase. Receipts include entity type, score, risk level, signals verified, full report snapshot, and timestamp. Enables audit history, score change tracking, and re-audit comparisons — the beginning of a reputation layer CROO doesn't currently provide.
+### Trust Compare
+Compare multiple projects or agents side-by-side. Submit 2–5 entities and VERIS runs parallel due diligence, ranks by trust score, and outputs a verdict with the strongest option identified.
+
+### ZERU Research Enrichment (A2A)
+Every project audit is automatically enriched by ZERU, a second autonomous agent. ZERU provides:
+- Market context and TVL analysis
+- Risk factor identification and weighting
+- Competitive positioning
+- Sentiment scoring (positive / neutral / negative)
+
+### SENTINEL Compliance Decision (A2A)
+After VERIS scores and ZERU researches, SENTINEL produces a final compliance decision:
+
+- **Verdict**: `PROCEED | PROCEED WITH CAUTION | HIGH RISK | AVOID | INSUFFICIENT DATA`
+- **Compliance Score**: Calculated from trust score, adjusted for sentiment, confidence, and weighted risk penalties
+- **Compliance Score Breakdown**: Line-by-line audit trail showing exactly how the score was derived
+- **Recommended Actions**: Operational steps (limit exposure, schedule re-audit, do not integrate, etc.)
+- **Review Period**: How long until re-assessment is recommended, with reasoning
+- **Override System**: Hard trust events (confirmed fraud, criminal conviction, sanctions) automatically override all scores to AVOID regardless of other signals
+
+### Trust Receipts
+Every audit is stored as a permanent trust receipt. Receipts include entity type, trust score, risk level, signals verified, full report snapshot, and timestamp — building a reputation layer CROO doesn't natively provide.
 
 ---
 
 ## Architecture
 
 ```
-Frontend:       Vercel (React + Vite + TypeScript)
-Backend:        Node.js on Render (https://veris-agent.onrender.com)
-Search:         Tavily API (advanced web search, 5 queries per audit)
-AI Extraction:  Groq llama-3.3-70b-versatile (temperature 0.0)
-AI Synthesis:   Groq llama-3.3-70b-versatile (temperature 0.2)
-Protocol:       CROO v1 SDK (@croo-network/sdk)
-Network:        Base Mainnet
-Storage:        Supabase (trust receipts)
+Frontend:        Vercel (React + Vite + TypeScript)
+Backend:         Node.js on Railway
+Search:          Tavily API (advanced web search, 9 queries per audit)
+AI Extraction:   Groq llama-3.3-70b-versatile (temperature 0.0)
+Protocol:        CROO v1 SDK (@croo-network/sdk)
+Network:         Base Mainnet
+Storage:         Supabase (trust receipts + API keys)
+Research Agent:  ZERU (Render)
+Decision Agent:  SENTINEL (Render)
 ```
 
 ---
@@ -65,7 +111,7 @@ node server.js
 
 ## Environment Variables
 
-```
+```bash
 CROO_API_URL=https://api.croo.network
 CROO_WS_URL=wss://api.croo.network/ws
 CROO_API_KEY=your_croo_sdk_key
@@ -73,82 +119,90 @@ TAVILY_API_KEY=your_tavily_key
 GROQ_API_KEY=your_groq_key
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_KEY=your_supabase_anon_key
-RAILWAY_EXTERNAL_URL=https://veris-agent-production.up.railway.app
+ZERU_API_URL=https://zeru-agent-iz16.onrender.com
+SENTINEL_API_URL=https://sentinel-agent-e787.onrender.com
 ```
 
 ---
 
 ## API Endpoints
 
-### POST /audit — Project or Agent Due Diligence
+### Public Trust API (requires `X-Api-Key` header)
 
-**Project audit:**
-```json
-{
-  "requirements": {
-    "type": "project",
-    "name": "Aave",
-    "website": "https://aave.com",
-    "github": "https://github.com/aave",
-    "twitter": "https://x.com/aaveaave",
-    "docs": "https://docs.aave.com"
-  }
-}
+```
+GET  /trust/:entityName                    — Structured JSON trust score
+GET  /trust/:entityName?type=agent         — Agent trust score with layer breakdown
+GET  /compare/projects?a=Aave&b=Compound   — Side-by-side project comparison
+GET  /evidence/:entityName                 — Raw evidence for custom scoring
+GET  /a2a/demo/:entityName                 — Combined VERIS + ZERU output
+GET  /receipts/summary                     — All audited entities, deduped
+GET  /receipts/:entityId                   — Full receipt history for one entity
 ```
 
-**Agent due diligence:**
-```json
-{
-  "requirements": {
-    "type": "agent",
-    "agentId": "your-agent-id",
-    "serviceId": "your-service-id",
-    "agentName": "ZERU",
-    "endpointUrl": "https://your-agent.onrender.com",
-    "serviceDescription": "DeFi research agent",
-    "category": "research"
-  }
-}
+### CROO Order Endpoints (no auth — CROO handles that)
+
+```
+POST /audit   — Project or Agent Due Diligence
+POST /compare — Trust Compare (2–5 agents)
 ```
 
-### POST /compare — Trust Compare (2–5 agents)
-
-```json
-{
-  "agents": [
-    {
-      "agentId": "agent-id-1",
-      "agentName": "ZERU",
-      "endpointUrl": "https://zeru-agent.onrender.com",
-      "category": "research"
-    },
-    {
-      "agentId": "agent-id-2",
-      "agentName": "Another Agent",
-      "category": "research"
-    }
-  ]
-}
-```
-
-### GET /receipts/:entityId — Trust Receipt History
-
-Returns all previous audit receipts for an entity.
-
----
-
-## CROO Order Requirements Format
-
-When ordering through the Agent Store, submit requirements as JSON:
+### CROO Order Format
 
 ```json
 {
   "type": "project",
-  "name": "Project Name",
-  "website": "https://...",
-  "github": "https://...",
-  "twitter": "https://..."
+  "name": "Aave",
+  "website": "https://aave.com",
+  "github": "https://github.com/aave",
+  "twitter": "https://x.com/aaveaave"
 }
+```
+
+---
+
+## Scoring Model
+
+### Project Trust Score (0–100)
+
+| Dimension | Weight | What it measures |
+|---|---|---|
+| Identity | 25% | Founders, team, LinkedIn, track record |
+| Transparency | 25% | Docs, whitepaper, roadmap, governance |
+| Verification | 35% | GitHub, audits, open source, live product |
+| Reputation | 15% | Media, fraud history, community |
+
+Hard events (confirmed fraud, criminal conviction, SEC enforcement) override all scores to 0 regardless of other signals.
+
+### Agent Trust Bands
+
+| Score | Band | Meaning |
+|---|---|---|
+| 76–100 | Trusted | All three layers confirmed |
+| 56–75 | Established | Metadata + live verification |
+| 36–55 | Emerging | Working endpoint, limited history |
+| 16–35 | Unverified | No metadata, no live test |
+| 0–15 | Critical | Failed tests or confirmed fraud |
+
+### Ground Truth System
+Known established protocols (Aave, Uniswap, MakerDAO, etc.) have calibration floors that prevent search API variance from producing anomalous scores. Known failures (FTX, Terra, SafeMoon, OneCoin, BitConnect) are pre-confirmed as Critical regardless of search results.
+
+---
+
+## Trust Receipt Schema (Supabase)
+
+```sql
+trust_receipts (
+  id               uuid primary key,
+  entity_type      text,         -- 'project' or 'agent'
+  entity_id        text,         -- lowercase entity identifier
+  entity_name      text,
+  score            integer,
+  risk_level       text,
+  signals_verified integer,
+  signals_total    integer,
+  report           text,         -- full report snapshot
+  created_at       timestamptz
+)
 ```
 
 ---
@@ -156,7 +210,7 @@ When ordering through the Agent Store, submit requirements as JSON:
 ## SDK Methods Used
 
 | Method | Purpose |
-|--------|---------|
+|---|---|
 | `AgentClient` | Runtime agent authentication |
 | `EventType.NegotiationCreated` | Accept incoming CROO orders |
 | `EventType.OrderPaid` | Trigger due diligence on payment |
@@ -165,73 +219,34 @@ When ordering through the Agent Store, submit requirements as JSON:
 | `acceptNegotiation()` | Lock order on-chain |
 | `deliverOrder()` | Submit report on-chain |
 | `getOrder()` | Read order requirements |
-| `payOrder()` | Fund escrow (agent audit mode) |
-| `getDelivery()` | Retrieve delivered report |
-
----
-
-## Trust Receipt Schema (Supabase)
-
-```sql
-trust_receipts (
-  id              uuid primary key,
-  entity_type     text,         -- 'project' or 'agent'
-  entity_id       text,         -- agentId or project name
-  entity_name     text,
-  score           integer,
-  risk_level      text,
-  signals_verified integer,
-  signals_total    integer,
-  report          text,         -- full report snapshot
-  created_at      timestamptz
-)
-```
-
----
-
-## Agent Due Diligence Categories
-
-| Category | Use for |
-|----------|---------|
-| `research` | DeFi research and intelligence agents |
-| `trading` | Market analysis and signal agents |
-| `data` | Analytics and metrics agents |
-| `writing` | Content and copywriting agents |
-| `coding` | Developer and smart contract agents |
-| `defi` | DeFi specialist agents |
-| `security` | Audit and security agents |
-| `general` | Any agent (auto-detected fallback) |
-
-Category is auto-detected from agent name and description if not specified.
-
----
-
-## Why Trust Receipts Matter
-
-CROO currently exposes no order history, ratings, delivery stats, or reputation data for agents. This means every buyer is flying blind.
-
-VERIS addresses this gap by storing every audit as a permanent receipt. Over time, this creates the reputation infrastructure CROO doesn't yet have:
-
-- Was this agent audited before?
-- Did its score improve or decline?
-- Has it been flagged by multiple auditors?
-
-As CROO matures, VERIS becomes the source of trust signals rather than just a consumer of them.
 
 ---
 
 ## On-Chain Proof (Base Mainnet)
 
-All VERIS reports are delivered on-chain via CROO protocol. Verified transactions:
+All VERIS reports are delivered on-chain via CROO protocol.
 
-| Type | TX Hash |
-|------|---------|
-| Payment | `0x77125bff271e0306b5e4cbd4358eaeda44a1d93b9677d01b6cb4bcf0edf0647d` |
-| Delivery | `0xe262f4a0c6e6e4d3baa0b1798118ed21a63a535b07b5ec96db9cd53335c0e59d` |
-| Payment | `0x979d4160413b8c74e558a56eca2ca12e425885ef81854428fafddbf10ae4bfea` |
-| Delivery | `0xdeefdc8c844b0f7a8c7dbdeb725b1587f603c01db0a89d67316478da0917ddd8` |
+| Type | TX Hash | Date |
+|---|---|---|
+| Payment | `0x95f32bdf3c84abcca45cf5ad63d830eae1fdbce4a0b5ed54d3ce56d2b44f1852` | 2026-06-24 |
+| Payment | `0x51a5cabfaf83831a4399dc137154521a26f04deadd16be2de33dbfd6e5b31ba8` | 2026-06-24 |
+| Payment | `0x3d8609fc279fcaa8f686e54751447054922c85d87c577d306eee8b2f276b2fe8` | 2026-06-23 |
 
 Verifiable at [basescan.org](https://basescan.org)
+
+---
+
+## Why Trust Receipts Matter
+
+CROO currently exposes no order history, ratings, delivery stats, or reputation data for agents. Every buyer is effectively flying blind.
+
+VERIS addresses this gap by storing every audit as a permanent receipt. Over time this creates reputation infrastructure CROO doesn't yet have:
+
+- Was this project or agent audited before?
+- Did its score improve or decline between audits?
+- Has it been flagged by multiple independent auditors?
+
+As CROO matures, VERIS becomes a source of trust signals rather than just a consumer of them.
 
 ---
 
