@@ -80,6 +80,22 @@ Every audit is stored as a permanent trust receipt. Receipts include entity type
 
 ---
 
+## Screenshots
+
+> Live demo at [veris-site.vercel.app](https://veris-site.vercel.app)
+
+| Screen | Description |
+|---|---|
+| CROO Listing | VERIS listed on the CROO Agent Store |
+| Audit Page | Submit any project or agent for due diligence |
+| Trust Report | Full legitimacy/maturity breakdown with source evidence |
+| Trust Receipt | Permanent on-chain audit receipt with score history |
+| SENTINEL Verdict | Compliance decision with score breakdown and recommended actions |
+
+*(Screenshots to be added)*
+
+---
+
 ## Architecture
 
 ```
@@ -93,6 +109,46 @@ Storage:         Supabase (trust receipts + API keys)
 Research Agent:  ZERU (Render)
 Decision Agent:  SENTINEL (Render)
 ```
+
+---
+
+## A2A Composability
+
+VERIS demonstrates real agent-to-agent commerce on CROO — not simulated, not mocked. Every project audit triggers a live multi-agent workflow:
+
+```
+1. Buyer places order on CROO Agent Store
+         ↓
+2. VERIS accepts negotiation, receives payment
+         ↓
+3. VERIS runs trust verification (legitimacy, maturity, evidence)
+         ↓
+4. VERIS calls ZERU — requests market research and risk intelligence
+         ↓
+5. ZERU returns: summary, risk factors, sentiment, market context
+         ↓
+6. VERIS calls SENTINEL — sends trust score + ZERU signals
+         ↓
+7. SENTINEL returns: compliance verdict, score breakdown, recommended actions
+         ↓
+8. VERIS merges all three outputs into one unified report
+         ↓
+9. Report delivered on-chain via CROO · Trust receipt saved to Supabase
+```
+
+This creates a due diligence workflow that no single agent could provide alone. Each agent has a distinct role and cannot be replaced by either of the others.
+
+---
+
+## Why VERIS Matters
+
+As the agent economy grows, trust becomes infrastructure.
+
+Today, every CROO buyer is flying blind. There are no ratings, no order history, no reputation signals, no audit trails. A buyer hiring an agent for the first time has no way to know whether it will deliver, whether the creator is identifiable, or whether the agent has a track record of quality.
+
+VERIS addresses this gap by combining research, verification, and compliance decisions into a single autonomous workflow — and storing every audit as a permanent trust receipt that compounds in value over time.
+
+The goal is not to be another agent. The goal is to be the trust layer the entire agent economy builds on.
 
 ---
 
