@@ -8,6 +8,29 @@ VERIS is an autonomous three-agent due diligence system built on CROO protocol (
 
 ---
 
+## Current Status
+
+| | |
+|---|---|
+| ✅ | 3 autonomous agents deployed (VERIS, ZERU, SENTINEL) |
+| ✅ | Live on CROO Agent Store |
+| ✅ | Real Base Mainnet transactions confirmed |
+| ✅ | Agent-to-agent (A2A) workflow operational |
+| ✅ | Project due diligence operational |
+| ✅ | Agent due diligence operational |
+| ✅ | Trust receipt system operational |
+| ✅ | Public HTTP Trust API operational |
+| ✅ | SENTINEL compliance decisions operational |
+
+|  |  |
+|---|---|
+| **Total Agents** | 3 (VERIS · ZERU · SENTINEL) |
+| **Network** | Base Mainnet |
+| **Protocol** | CROO v1 |
+| **Status** | Production Demo |
+
+---
+
 ## The Three-Agent System
 
 VERIS is not a single agent. It is a due diligence network composed of three cooperating autonomous agents:
@@ -31,6 +54,18 @@ Buyer Order (CROO)
 | **SENTINEL** | Compliance decision engine, recommended actions, review periods | Render |
 
 Every audit placed through CROO automatically triggers all three agents. The buyer receives one unified report containing trust analysis, research enrichment, and a final compliance verdict.
+
+---
+
+## Why VERIS Matters
+
+As the agent economy grows, trust becomes infrastructure.
+
+Today, every CROO buyer is flying blind. There are no ratings, no order history, no reputation signals, no audit trails. A buyer hiring an agent for the first time has no way to know whether it will deliver, whether the creator is identifiable, or whether the agent has a track record of quality.
+
+VERIS addresses this gap by combining research, verification, and compliance decisions into a single autonomous workflow — and storing every audit as a permanent trust receipt that compounds in value over time.
+
+VERIS is designed to become trust infrastructure for the agent economy — the layer every agent and buyer can depend on.
 
 ---
 
@@ -80,38 +115,6 @@ Every audit is stored as a permanent trust receipt. Receipts include entity type
 
 ---
 
-## Screenshots
-
-> Live demo at [veris-site.vercel.app](https://veris-site.vercel.app)
-
-| Screen | Description |
-|---|---|
-| CROO Listing | VERIS listed on the CROO Agent Store |
-| Audit Page | Submit any project or agent for due diligence |
-| Trust Report | Full legitimacy/maturity breakdown with source evidence |
-| Trust Receipt | Permanent on-chain audit receipt with score history |
-| SENTINEL Verdict | Compliance decision with score breakdown and recommended actions |
-
-*(Screenshots to be added)*
-
----
-
-## Architecture
-
-```
-Frontend:        Vercel (React + Vite + TypeScript)
-Backend:         Node.js on Railway
-Search:          Tavily API (advanced web search, 9 queries per audit)
-AI Extraction:   Groq llama-3.3-70b-versatile (temperature 0.0)
-Protocol:        CROO v1 SDK (@croo-network/sdk)
-Network:         Base Mainnet
-Storage:         Supabase (trust receipts + API keys)
-Research Agent:  ZERU (Render)
-Decision Agent:  SENTINEL (Render)
-```
-
----
-
 ## A2A Composability
 
 VERIS demonstrates real agent-to-agent commerce on CROO — not simulated, not mocked. Every project audit triggers a live multi-agent workflow:
@@ -138,17 +141,46 @@ VERIS demonstrates real agent-to-agent commerce on CROO — not simulated, not m
 
 This creates a due diligence workflow that no single agent could provide alone. Each agent has a distinct role and cannot be replaced by either of the others.
 
+
+
 ---
 
-## Why VERIS Matters
+## Screenshots
 
-As the agent economy grows, trust becomes infrastructure.
+> Live demo at [veris-site.vercel.app](https://veris-site.vercel.app)
 
-Today, every CROO buyer is flying blind. There are no ratings, no order history, no reputation signals, no audit trails. A buyer hiring an agent for the first time has no way to know whether it will deliver, whether the creator is identifiable, or whether the agent has a track record of quality.
+### CROO Listing
+![CROO Listing](screenshots/croo-listing.png)
 
-VERIS addresses this gap by combining research, verification, and compliance decisions into a single autonomous workflow — and storing every audit as a permanent trust receipt that compounds in value over time.
+### Audit Page
+![Audit Page](screenshots/audit-page.png)
 
-The goal is not to be another agent. The goal is to be the trust layer the entire agent economy builds on.
+### Trust Report
+![Trust Report](screenshots/trust-report.png)
+
+### Trust Receipt
+![Trust Receipt](screenshots/trust-receipt.png)
+
+### SENTINEL Verdict
+![SENTINEL Verdict](screenshots/sentinel-verdict.png)
+
+
+---
+
+## Architecture
+
+```
+Frontend:        Vercel (React + Vite + TypeScript)
+Backend:         Node.js on Railway
+Search:          Tavily API (advanced web search, 9 queries per audit)
+AI Extraction:   Groq llama-3.3-70b-versatile (temperature 0.0)
+Protocol:        CROO v1 SDK (@croo-network/sdk)
+Network:         Base Mainnet
+Storage:         Supabase (trust receipts + API keys)
+Research Agent:  ZERU (Render)
+Decision Agent:  SENTINEL (Render)
+```
+
 
 ---
 
