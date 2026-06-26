@@ -1581,9 +1581,9 @@ export async function runProjectDueDiligence(project) {
 ══════════════════════════════════════════════
 Subject:          ${project.name}${project.resolvedFrom ? ` (resolved from: ${project.resolvedFrom})` : ''}
 Entity Class:     ${template.label}
-Website:          ${project.website || 'Not provided'}
-GitHub:           ${project.github  || 'Not provided'}
-Twitter:          ${project.twitter || 'Not provided'}
+Website:          ${project.website || 'Not located'}
+GitHub:           ${project.github  || 'Not located'}
+Twitter:          ${project.twitter || 'Not located'}
 Founded:          ${evidence.founded_year || 'Unknown'}
 Audited:          ${new Date().toUTCString()}
 Audited by:       VERIS — Trust Infrastructure for the Agent Economy
