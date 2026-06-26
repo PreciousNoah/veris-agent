@@ -147,7 +147,7 @@ This creates a due diligence workflow that no single agent could provide alone. 
 
 ## Screenshots
 
-> Live demo at [veris-site.vercel.app](https://veris-site.vercel.app)
+> Live demo at [veris-site.vercel.app](https://veris-site-rosy.vercel.app/)
 
 ### CROO Listing
 ![CROO Listing](screenshots/croo-listing.png)
