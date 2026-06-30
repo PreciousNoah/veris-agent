@@ -41,6 +41,8 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 // HELPERS
 // ════════════════════════════════════════════════════════════════════
 
+// Safely parse a request body that might be JSON string, JSON object,
+// or plain text (all three come in from different CROO order formats)
 function parseBody(body) {
   if (!body) return null;
   if (typeof body === 'object') return body;
@@ -83,6 +85,7 @@ function parseRecommendationFromReport(report) {
 
 function parseSignalsFromReport(report) {
   if (!report) return { verified: 0, total: 0 };
+  // Try all known patterns in the report
   const patterns = [
     /SIGNAL COVERAGE:\s+(\d+)\/(\d+)/i,
     /(\d+)\/(\d+)\s+signals\s+verifiable/i,
@@ -94,6 +97,7 @@ function parseSignalsFromReport(report) {
     const m = report.match(p);
     if (m) return { verified: parseInt(m[1]), total: parseInt(m[2]) };
   }
+  // Count YES signals directly from the report as fallback
   const yesCount = (report.match(/^\s+\+\s*\d+\s+/gm) || []).length;
   return { verified: yesCount, total: yesCount > 0 ? 27 : 0 };
 }
@@ -132,25 +136,31 @@ function receiptToTrustJSON(receipt, cached = true) {
 
 // ════════════════════════════════════════════════════════════════════
 // API KEY MIDDLEWARE
+// Skips gracefully if api_keys table doesn't exist yet
 // ════════════════════════════════════════════════════════════════════
 
 async function requireApiKey(req, res, next) {
-  if (!supabase) return next();
+  if (!supabase) return next(); // dev mode — no Supabase
+
   const key = req.headers['x-api-key'] || req.query.api_key;
   if (!key) {
     return res.status(401).json({
       error: 'API key required. Pass X-Api-Key header or ?api_key= query param.',
     });
   }
+
   try {
     const { data, error } = await supabase
       .from('api_keys')
       .select('*')
       .eq('key', key)
       .single();
+
     if (error || !data) {
       return res.status(403).json({ error: 'Invalid API key.' });
     }
+
+    // Reset daily counter if it's a new day
     const today = new Date().toISOString().slice(0, 10);
     if (data.last_reset !== today) {
       await supabase.from('api_keys')
@@ -158,17 +168,22 @@ async function requireApiKey(req, res, next) {
         .eq('key', key);
       data.requests_today = 0;
     }
+
     const limit = data.daily_limit || 100;
     if (data.requests_today >= limit) {
       return res.status(429).json({ error: `Daily limit of ${limit} reached.` });
     }
+
+    // Increment (fire-and-forget)
     supabase.from('api_keys')
       .update({ requests_today: data.requests_today + 1 })
       .eq('key', key)
       .then(() => {});
+
     req.apiKey = data;
     next();
   } catch {
+    // Table doesn't exist yet — let through so tests aren't blocked
     console.warn('api_keys table not found — skipping auth. Run the Supabase migration.');
     next();
   }
@@ -213,26 +228,38 @@ app.get('/', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// CROO ROUTES
+// CROO ROUTES — no auth, CROO handles that via SDK
 // ════════════════════════════════════════════════════════════════════
 
 app.post('/audit', async (req, res) => {
+  // Handle JSON object, JSON string, or plain text body
   const body = parseBody(req.body);
   let requirements = body?.requirements;
+
+  // If still no requirements, treat the whole body as requirements
   if (!requirements && body && typeof body === 'object') {
     requirements = body;
   }
+
+  // Last resort: plain text body → treat as project name
   if (!requirements && typeof req.body === 'string' && req.body.trim()) {
     requirements = { type: 'project', name: req.body.trim() };
   }
+
   if (!requirements) {
     return res.status(400).json({ error: 'requirements object needed' });
   }
+
   try {
     let report = await runVERIS(requirements, REQUESTER_SDK_KEY);
+
+    // A2A enrichment — ZERU research then SENTINEL decision
     if (requirements.type === 'project' && requirements.name) {
+      // Step 1: ZERU research
       const zeruResult = await fetchZeruEnrichment(requirements.name);
       report += buildEnrichmentBlock(zeruResult, requirements.name);
+
+      // Step 2: SENTINEL decision (uses VERIS score + ZERU sentiment/risks)
       const scoreMatch = report.match(/LEGITIMACY:\s+(\d+)\/100/i);
       const confMatch  = report.match(/CONFIDENCE:.*?(\d+)%/);
       const trustScore = scoreMatch ? parseInt(scoreMatch[1]) : null;
@@ -240,6 +267,7 @@ app.post('/audit', async (req, res) => {
       const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult);
       report += buildSentinelBlock(sentinelResult);
     }
+
     res.json({ report });
   } catch (err) {
     console.error('/audit error:', err.message);
@@ -247,6 +275,7 @@ app.post('/audit', async (req, res) => {
   }
 });
 
+// ── POST /compare  (agent trust compare — existing CROO format) ──────
 app.post('/compare', async (req, res) => {
   const body   = parseBody(req.body);
   const agents = body?.agents;
@@ -261,16 +290,23 @@ app.post('/compare', async (req, res) => {
   }
 });
 
+// ── GET /compare/projects?a=Aave&b=Compound  (judge-friendly) ────────
+// Returns structured JSON comparison — no text report, directly readable
 app.get('/compare/projects', requireApiKey, async (req, res) => {
   const names = [req.query.a, req.query.b, req.query.c, req.query.d, req.query.e]
     .filter(Boolean)
     .map(n => n.trim());
+
   if (names.length < 2) {
     return res.status(400).json({ error: 'Pass at least ?a=ProjectA&b=ProjectB' });
   }
+
   console.log(`\n⚖️ VERIS Project Compare: ${names.join(' vs ')}`);
+
+  // Run all audits in parallel — use cache where available
   const results = await Promise.all(names.map(async (name) => {
     try {
+      // Check cache first
       const cached = await getCachedReceipt(name);
       if (cached) {
         const derivedRisk = (() => {
@@ -312,6 +348,7 @@ app.get('/compare/projects', requireApiKey, async (req, res) => {
           error:           null,
         };
       }
+      // Run fresh audit
       const report         = await runVERIS({ type: 'project', name }, REQUESTER_SDK_KEY);
       const score          = parseScoreFromReport(report);
       const signals        = parseSignalsFromReport(report);
@@ -341,11 +378,15 @@ app.get('/compare/projects', requireApiKey, async (req, res) => {
       return { entity: name, trustScore: null, riskLevel: 'Error', error: err.message };
     }
   }));
+
+  // Rank by trust score
   const ranked = [...results]
     .filter(r => r.trustScore !== null)
     .sort((a, b) => b.trustScore - a.trustScore);
+
   const best  = ranked[0] || null;
   const worst = ranked[ranked.length - 1] || null;
+
   let verdict = 'Insufficient data to compare.';
   if (best && best.trustScore >= 65) {
     verdict = `${best.entity} has the strongest verifiable trust signals (${best.trustScore}/100). `;
@@ -357,6 +398,7 @@ app.get('/compare/projects', requireApiKey, async (req, res) => {
   } else if (best) {
     verdict = `All compared entities have limited verifiable signals. Strongest: ${best.entity} (${best.trustScore}/100). Proceed with caution across the board.`;
   }
+
   res.json({
     compared:   names,
     results:    ranked,
@@ -375,6 +417,8 @@ app.get('/receipts', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(50);
     if (error) throw error;
+
+    // Filter out junk entity names from old malformed CROO orders
     const clean = (name) => {
       if (!name) return false;
       if (name.startsWith('{')) return false;
@@ -385,6 +429,7 @@ app.get('/receipts', async (req, res) => {
       if (name.includes('requirements')) return false;
       return true;
     };
+
     const receipts = (data || []).filter(r => clean(r.entity_name));
     res.json({ receipts, count: receipts.length });
   } catch (err) {
@@ -392,6 +437,7 @@ app.get('/receipts', async (req, res) => {
   }
 });
 
+// Judge-friendly summary — groups by entity, shows latest score per entity
 app.get('/receipts/summary', async (req, res) => {
   if (!supabase) return res.json({ entities: [], note: 'Supabase not configured' });
   try {
@@ -401,18 +447,23 @@ app.get('/receipts/summary', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw error;
+
+    // Filter out junk entity names — old CROO orders where raw JSON got saved as name
     const isCleanName = (name) => {
       if (!name) return false;
-      if (name.startsWith('{')) return false;
-      if (name.startsWith('"')) return false;
-      if (name.length > 60)  return false;
-      if (name.includes('\\')) return false;
-      if (name.includes('type')) return false;
+      if (name.startsWith('{')) return false;       // raw JSON object
+      if (name.startsWith('"')) return false;       // quoted string
+      if (name.length > 60)  return false;          // suspiciously long
+      if (name.includes('\\')) return false;        // escaped JSON
+      if (name.includes('type')) return false;      // JSON field leaking in
       return true;
     };
+
+    // Derive risk level from score when stored value is missing
     const deriveRisk = (score, stored, type) => {
       if (stored && stored !== 'Unknown' && stored !== 'unknown') return stored;
       if (score === null || score === undefined) return 'Unknown';
+      // Agents use a separate trust model
       if (type === 'agent') {
         if (score >= 76) return 'Trusted';
         if (score >= 56) return 'Established';
@@ -420,6 +471,7 @@ app.get('/receipts/summary', async (req, res) => {
         if (score >= 16) return 'Unverified';
         return 'Critical';
       }
+      // Projects
       if (score >= 80) return 'Low';
       if (score >= 65) return 'Low-Medium';
       if (score >= 50) return 'Medium';
@@ -427,17 +479,22 @@ app.get('/receipts/summary', async (req, res) => {
       if (score <= 5)  return 'Critical';
       return 'High';
     };
+
+    // Deduplicate — keep latest per entity name
     const seen = new Map();
     for (const row of (data || [])) {
       if (!isCleanName(row.entity_name)) continue;
       if (!seen.has(row.entity_name)) seen.set(row.entity_name, row);
     }
+
     const entities = [...seen.values()].sort((a, b) => {
+      // Sort: projects by score desc, then agents
       if (a.entity_type !== b.entity_type) {
         return a.entity_type === 'project' ? -1 : 1;
       }
       return (b.score || 0) - (a.score || 0);
     });
+
     res.json({
       totalEntitiesAudited: entities.length,
       lastUpdated:          entities[0]?.created_at || null,
@@ -475,13 +532,17 @@ app.get('/receipts/:entityId', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// TRUST API
+// TRUST API  —  GET /trust/:entityName
+// Returns a structured JSON trust score.
+// This is what ZERU and other agents consume.
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/trust/:entityName', requireApiKey, async (req, res) => {
   const entityName   = req.params.entityName.trim();
   const entityType   = req.query.type || 'project';
   const forceRefresh = req.query.refresh === 'true';
+
+  // Agent audits bypass cache — agent status changes frequently
   if (entityType === 'agent') {
     try {
       const agentId = req.query.agentId || entityName;
@@ -494,6 +555,8 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
         serviceDescription: req.query.description || null,
         category:           req.query.category || 'general',
       }, REQUESTER_SDK_KEY);
+
+      // Parse agent report metrics
       const overallMatch  = report.match(/OVERALL SCORE:\s+(\d+)\/100/);
       const confMatch     = report.match(/CONFIDENCE:\s+(High|Medium|Low)/i);
       const recMatch      = report.match(/RECOMMENDATION:\s+[^\s]+\s+([A-Z ]+)\n/);
@@ -501,24 +564,28 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
       const l1Match       = report.match(/LAYER 1[^\d]*(\d+)\/100/);
       const l2Match       = report.match(/LAYER 2[^\d]*(\d+)\/100/);
       const l3Match       = report.match(/LAYER 3[^\d]*(\d+)\/100/);
+
       const layerScores = {
         metadata: l1Match ? parseInt(l1Match[1]) : null,
         web:      l2Match ? parseInt(l2Match[1]) : null,
         live:     l3Match ? parseInt(l3Match[1]) : null,
       };
       const trustScore = overallMatch ? parseInt(overallMatch[1]) : null;
+
       return res.json({
         entity:          entityName,
         entityId:        agentId,
         entityType:      'agent',
         trustScore,
         confidence:      confMatch ? confMatch[1] : 'Low',
+        // Agent trust model — separate bands from project model
         trustBand:       deriveAgentRiskLevel(trustScore, layerScores),
         riskLevel:       deriveAgentRiskLevel(trustScore, layerScores),
         recommendation:  deriveAgentRecommendation(trustScore, layerScores),
         signalsVerified: coverageMatch ? parseInt(coverageMatch[1]) : 0,
         signalsTotal:    coverageMatch ? parseInt(coverageMatch[2]) : 15,
         layerScores,
+        // Agent-specific context
         agentTrustModel: {
           bands: '0-15 Critical | 16-35 Unverified | 36-55 Emerging | 56-75 Established | 76-100 Trusted',
           note: 'Agent scores reflect ecosystem maturity. A new agent with a working endpoint is Emerging, not Critical.',
@@ -532,10 +599,13 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
       return res.status(500).json({ error: err.message });
     }
   }
+
+  // Project path (unchanged)
   if (!forceRefresh) {
     const cached = await getCachedReceipt(entityName);
     if (cached) return res.json(receiptToTrustJSON(cached, true));
   }
+
   try {
     const report         = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
     const score          = parseScoreFromReport(report);
@@ -543,6 +613,7 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
     const recommendation = parseRecommendationFromReport(report);
     const signals        = parseSignalsFromReport(report);
     const incidents      = parseIncidentsFromReport(report);
+
     let riskLevel = 'Unknown';
     if (score !== null) {
       if (score >= 70)      riskLevel = 'Low';
@@ -552,6 +623,7 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
       else                  riskLevel = 'Critical';
     }
     if (incidents.length > 0) riskLevel = 'Critical';
+
     res.json({
       entity:          entityName,
       entityId:        entityName.toLowerCase().trim(),
@@ -574,12 +646,24 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
 
 // ════════════════════════════════════════════════════════════════════
 // AGENT TRUST MODEL
+// Agents are judged differently from projects.
+// A new agent with a working endpoint is NOT the same as FTX.
+// These bands reflect ecosystem maturity, not just raw score.
+//
+//  0-15   Critical      — failed live tests, or confirmed fraud
+//  16-35  Unverified    — no metadata, no web presence, no live test
+//  36-55  Emerging      — some signals but limited verification
+//  56-75  Established   — metadata + web presence OR live verified
+//  76-100 Trusted       — all three layers confirmed
 // ════════════════════════════════════════════════════════════════════
 function deriveAgentRiskLevel(score, layerScores) {
   if (score === null) return 'Unknown';
   const liveWorking = (layerScores?.live  || 0) > 0;
   const webWorking  = (layerScores?.web   || 0) > 0;
   const metaWorking = (layerScores?.metadata || 0) > 0;
+
+  // If live endpoint is working, agent is at minimum Emerging
+  // regardless of metadata availability
   if (score >= 76) return 'Trusted';
   if (score >= 56) return 'Established';
   if (score >= 36 || (liveWorking && score >= 20)) return 'Emerging';
@@ -600,12 +684,16 @@ function deriveAgentRecommendation(score, layerScores) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// EVIDENCE API
+// EVIDENCE API  —  GET /evidence/:entityName
+// Returns raw structured evidence — not a score.
+// Lets other agents build their own models on top of VERIS data.
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
   const entityName   = req.params.entityName.trim();
   const forceRefresh = req.query.refresh === 'true';
+
+  // 1. Check for cached raw_evidence in Supabase
   if (!forceRefresh && supabase) {
     try {
       const { data } = await supabase
@@ -616,6 +704,7 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
+
       if (data?.raw_evidence) {
         return res.json({
           entity:    data.entity_name,
@@ -625,16 +714,23 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
           timestamp: data.created_at,
         });
       }
-    } catch { /* cache miss */ }
+    } catch { /* cache miss — fall through */ }
   }
+
+  // 2. Run pipeline and extract evidence from report
   try {
-    const report = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
+    const report = await runVERIS(
+      { type: 'project', name: entityName },
+      REQUESTER_SDK_KEY
+    );
+
     const signals        = parseSignalsFromReport(report);
     const githubMatch    = report.match(/Active GitHub[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
     const auditMatch     = report.match(/Security audit found[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
     const whitepaperMatch= report.match(/Whitepaper found[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
     const foundedMatch   = report.match(/Founded:\s+(\d{4})/);
     const incidents      = parseIncidentsFromReport(report);
+
     res.json({
       entity: entityName,
       evidence: {
@@ -649,7 +745,9 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
       signalCoverage: {
         verified: signals.verified,
         total:    signals.total,
-        pct:      signals.total > 0 ? Math.round((signals.verified / signals.total) * 100) : 0,
+        pct:      signals.total > 0
+                    ? Math.round((signals.verified / signals.total) * 100)
+                    : 0,
       },
       cached:    false,
       timestamp: new Date().toISOString(),
@@ -661,13 +759,18 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// A2A DEMO
+// A2A DEMO  —  GET /a2a/demo/:entityName
+// Shows VERIS + ZERU working together.
+// ZERU_API_URL env var points at your research agent.
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
   const entityName = req.params.entityName.trim();
   const zeruUrl    = process.env.ZERU_API_URL;
+
   const result = { entity: entityName, veris: null, research: null, combined: null };
+
+  // VERIS trust — force refresh so we never serve stale cached receipts
   try {
     const report = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
     result.veris = {
@@ -682,12 +785,17 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
   } catch (err) {
     result.veris = { error: err.message };
   }
+
+  // ZERU research (if configured)
   if (zeruUrl) {
     try {
-      const zeruRes = await fetch(`${zeruUrl}/research/${encodeURIComponent(entityName)}`, {
-        headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
-        signal:  AbortSignal.timeout(30000),
-      });
+      const zeruRes = await fetch(
+        `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
+        {
+          headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
+          signal:  AbortSignal.timeout(30000),
+        }
+      );
       result.research = zeruRes.ok ? await zeruRes.json() : { error: `ZERU returned ${zeruRes.status}` };
     } catch (err) {
       result.research = { error: `ZERU unavailable: ${err.message}` };
@@ -695,6 +803,8 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
   } else {
     result.research = { note: 'Set ZERU_API_URL env var to enable A2A composability demo' };
   }
+
+  // Combined signal
   if (result.veris?.trustScore !== null && result.veris?.trustScore !== undefined) {
     const score = result.veris.trustScore;
     result.combined = {
@@ -708,148 +818,9 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
       timestamp:       new Date().toISOString(),
     };
   }
+
   res.json(result);
 });
-
-// ════════════════════════════════════════════════════════════════════
-// A2A ENRICHMENT FUNCTIONS
-// ════════════════════════════════════════════════════════════════════
-
-async function fetchZeruEnrichment(entityName) {
-  const zeruUrl = process.env.ZERU_API_URL;
-  if (!zeruUrl) {
-    return { available: false, reason: 'ZERU_API_URL not configured' };
-  }
-  try {
-    const res = await fetch(
-      `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
-      {
-        headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
-        signal:  AbortSignal.timeout(20000),
-      }
-    );
-    if (!res.ok) {
-      return { available: false, reason: `ZERU returned ${res.status}` };
-    }
-    const data = await res.json();
-    return { available: true, data };
-  } catch (err) {
-    return { available: false, reason: err.name === 'TimeoutError' ? 'ZERU timed out (20s)' : err.message };
-  }
-}
-
-async function fetchSentinelDecision(trustScore, confidence, zeruResult) {
-  const sentinelUrl = process.env.SENTINEL_API_URL;
-  if (!sentinelUrl) return { available: false, reason: 'SENTINEL_API_URL not configured' };
-  const sentiment   = zeruResult?.data?.sentiment   || 'neutral';
-  const riskFactors = zeruResult?.data?.risks        || [];
-  try {
-    const res = await fetch(`${sentinelUrl}/decide`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ trustScore, confidence, sentiment, riskFactors, incidents: [] }),
-      signal:  AbortSignal.timeout(15000),
-    });
-    if (!res.ok) return { available: false, reason: `SENTINEL returned ${res.status}` };
-    const data = await res.json();
-    return { available: true, data };
-  } catch (err) {
-    return { available: false, reason: err.name === 'TimeoutError' ? 'SENTINEL timed out' : err.message };
-  }
-}
-
-function buildEnrichmentBlock(zeruResult, entityName) {
-  const SEP = '══════════════════════════════════════════════';
-  if (!zeruResult.available) {
-    return `
-
-${SEP}
-② ZERU — Research Intelligence
-   Status: Unavailable (${zeruResult.reason})
-   Note:   VERIS trust report above remains valid.
-${SEP}`;
-  }
-  const d = zeruResult.data;
-  const risksText = (d.risks || [])
-    .filter(r => r && r.includes('%'))
-    .slice(0, 5).map(r => `  • ${r}`).join('\n')
-    || (d.risks || []).slice(0, 4).map(r => `  • ${r}`).join('\n')
-    || '  • None identified';
-  const summary = (d.summary || 'No summary available')
-    .trim()
-    .substring(0, 400)
-    + ((d.summary || '').length > 400 ? '...' : '');
-  return `
-
-${SEP}
-② ZERU — Research Intelligence
-   Source: ZERU Research Agent · ${new Date().toISOString().slice(0,10)}
-${SEP}
-MARKET SUMMARY
-${summary}
-
-KEY RISKS IDENTIFIED
-${risksText}
-
-SENTIMENT: ${(d.sentiment || 'neutral').toUpperCase()}
-${SEP}
-on the CROO network — demonstrating agent-to-agent composability.
-══════════════════════════════════════════════`;
-}
-
-function buildSentinelBlock(sentinelResult) {
-  const SEP = '══════════════════════════════════════════════';
-  if (!sentinelResult.available) {
-    return `
-
-${SEP}
-③ SENTINEL — Compliance Decision
-   Status: Unavailable (${sentinelResult.reason})
-${SEP}
-A2A CONTRIBUTORS
-  ① VERIS    — Trust Verification & Scoring    ✓
-  ② ZERU     — Research & Intelligence         ✓
-  ③ SENTINEL — Compliance Decision             ✗
-${SEP}`;
-  }
-  const d = sentinelResult.data;
-  const symbol = {
-    'PROCEED':              '✅',
-    'PROCEED WITH CAUTION': '⚠️',
-    'HIGH RISK':            '🔴',
-    'AVOID':                '⛔',
-    'INSUFFICIENT DATA':    '❓',
-  }[d.verdict] || '—';
-  const actions = (d.recommendedActions || [])
-    .map(a => `  ✓ ${a}`).join('\n') || '  ✓ See reasoning above';
-  return `
-
-${SEP}
-③ SENTINEL — Compliance Decision
-   Source: SENTINEL Decision Intelligence Agent
-${SEP}
-VERDICT:  ${symbol}  ${d.verdict}
-
-  Trust Score:       ${d.inputs?.trustScore ?? 'N/A'}/100
-  Compliance Score:  ${d.complianceScore ?? 'N/A'}/100
-  Risk Class:        ${d.riskClass}
-  Confidence:        ${d.confidence}
-  Review Period:     ${d.reviewPeriod}
-${SEP}
-REASONING
-${d.reason}
-${SEP}
-RECOMMENDED ACTIONS
-${actions}
-${SEP}
-A2A CONTRIBUTORS
-  ① VERIS    — Trust Verification & Scoring
-  ② ZERU     — Research & Intelligence
-  ③ SENTINEL — Compliance Decision ◄ (this step)
-
-  Three autonomous agents cooperating on CROO · Base Mainnet
-${SEP}`;
-}
 
 // ════════════════════════════════════════════════════════════════════
 // CROO ORDER HANDLER
@@ -872,26 +843,37 @@ async function handleOrder(provider, orderId) {
     if (rawRequirement) {
       let parsed = parseBody(rawRequirement);
 
+      // CROO wraps payloads in layers. Known shapes observed in production:
+      // Layer 1: { "text": "<json string>" }
+      // Layer 2: { "requirements": { "type": "project", ... } }
+      // Layer 3: { "type": "project", "name": "..." }  ← actual requirement
+      // Unwrap until we hit an object with a recognizable "type" field.
+
       let unwrapDepth = 0;
       while (parsed && typeof parsed === 'object' && unwrapDepth < 5) {
-        if (parsed.type) break;
-        if (parsed.entityType && parsed.entityId) break;
-        if (Array.isArray(parsed.agents)) break;
+        // Recognised payload shapes — stop unwrapping
+        if (parsed.type) break;                              // standard audit
+        if (parsed.entityType && parsed.entityId) break;     // trust receipt
+        if (Array.isArray(parsed.agents)) break;             // trust compare
 
+        // Unwrap { text: "<json string>" }
         if (typeof parsed.text === 'string') {
           const inner = parseBody(parsed.text);
           if (inner && typeof inner === 'object') { parsed = inner; unwrapDepth++; continue; }
         }
 
+        // Unwrap { requirements: { type: "project", ... } }
         if (parsed.requirements && typeof parsed.requirements === 'object') {
           parsed = parsed.requirements; unwrapDepth++; continue;
         }
 
+        // Unwrap { requirements: "<json string>" }
         if (typeof parsed.requirements === 'string') {
           const inner = parseBody(parsed.requirements);
           if (inner && typeof inner === 'object') { parsed = inner; unwrapDepth++; continue; }
         }
 
+        // Nothing left to unwrap
         break;
       }
 
@@ -899,8 +881,13 @@ async function handleOrder(provider, orderId) {
         console.log(`  📦 Unwrapped ${unwrapDepth} layer(s) of CROO wrapping`);
       }
 
+      // ── FIX: Handle ALL recognized payload shapes ──────────────────────
       if (parsed && typeof parsed === 'object' && parsed.type) {
         requirements = parsed;
+      } else if (parsed && typeof parsed === 'object' && parsed.entityType && parsed.entityId) {
+        requirements = parsed;  // ← Trust receipt requests
+      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.agents)) {
+        requirements = parsed;  // ← Trust compare requests
       } else if (parsed && typeof parsed === 'object' && parsed.name) {
         requirements = { type: 'project', ...parsed };
       } else {
@@ -917,10 +904,13 @@ async function handleOrder(provider, orderId) {
 
     let report = '';
 
+    // ── Route by service type ────────────────────────────────────────
+    // Trust Compare — requirements has an "agents" array
     if (Array.isArray(requirements.agents) && requirements.agents.length >= 2) {
       console.log(`  📊 Trust Compare: ${requirements.agents.length} agents`);
       report = await handleCompare(requirements.agents, REQUESTER_SDK_KEY);
 
+    // Trust Receipt History — requirements has entityType + entityId
     } else if (requirements.entityId && requirements.entityType) {
       console.log(`  🗄️ Trust Receipt: ${requirements.entityType} / ${requirements.entityId}`);
       const receipts = await getTrustReceipts(requirements.entityId);
@@ -973,6 +963,7 @@ ${scoreHistory}
 Auditor: VERIS · CROO v1 · Base Mainnet`;
       }
 
+    // Standard trust audit — default path
     } else {
       if (!requirements.type) requirements.type = 'project';
       if (requirements.type === 'project' && !requirements.name) {
@@ -981,6 +972,7 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
 
       report = await runVERIS(requirements, REQUESTER_SDK_KEY);
 
+      // A2A enrichment — ZERU then SENTINEL (project audits only)
       if (requirements.type === 'project' && requirements.name) {
         console.log(`  🔗 A2A: calling ZERU for ${requirements.name}...`);
         const zeruResult = await fetchZeruEnrichment(requirements.name);
@@ -1009,7 +1001,157 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
 }
 
 // ════════════════════════════════════════════════════════════════════
-// PROVIDER LISTENER
+// A2A ENRICHMENT FUNCTIONS
+// ════════════════════════════════════════════════════════════════════
+
+async function fetchZeruEnrichment(entityName) {
+  const zeruUrl = process.env.ZERU_API_URL;
+  if (!zeruUrl) {
+    return { available: false, reason: 'ZERU_API_URL not configured' };
+  }
+  try {
+    const res = await fetch(
+      `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
+      {
+        headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
+        signal:  AbortSignal.timeout(20000), // 20s — fail fast rather than risk gateway 502
+      }
+    );
+    if (!res.ok) {
+      return { available: false, reason: `ZERU returned ${res.status}` };
+    }
+    const data = await res.json();
+    return { available: true, data };
+  } catch (err) {
+    return { available: false, reason: err.name === 'TimeoutError' ? 'ZERU timed out (20s)' : err.message };
+  }
+}
+
+function buildEnrichmentBlock(zeruResult, entityName) {
+  const SEP = '══════════════════════════════════════════════';
+
+  if (!zeruResult.available) {
+    return `
+
+${SEP}
+② ZERU — Research Intelligence
+   Status: Unavailable (${zeruResult.reason})
+   Note:   VERIS trust report above remains valid.
+${SEP}`;
+  }
+
+  const d = zeruResult.data;
+  const risksText = (d.risks || [])
+    .filter(r => r && r.includes('%'))
+    .slice(0, 5).map(r => `  • ${r}`).join('\n')
+    || (d.risks || []).slice(0, 4).map(r => `  • ${r}`).join('\n')
+    || '  • None identified';
+
+  const summary = (d.summary || 'No summary available')
+    .trim()
+    .substring(0, 400)
+    + ((d.summary || '').length > 400 ? '...' : '');
+
+  return `
+
+${SEP}
+② ZERU — Research Intelligence
+   Source: ZERU Research Agent · ${new Date().toISOString().slice(0,10)}
+${SEP}
+MARKET SUMMARY
+${summary}
+
+KEY RISKS IDENTIFIED
+${risksText}
+
+SENTIMENT: ${(d.sentiment || 'neutral').toUpperCase()}
+${SEP}
+on the CROO network — demonstrating agent-to-agent composability.
+══════════════════════════════════════════════`;
+}
+
+async function fetchSentinelDecision(trustScore, confidence, zeruResult) {
+  const sentinelUrl = process.env.SENTINEL_API_URL;
+  if (!sentinelUrl) return { available: false, reason: 'SENTINEL_API_URL not configured' };
+
+  const sentiment   = zeruResult?.data?.sentiment   || 'neutral';
+  const riskFactors = zeruResult?.data?.risks        || [];
+
+  try {
+    const res = await fetch(`${sentinelUrl}/decide`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ trustScore, confidence, sentiment, riskFactors, incidents: [] }),
+      signal:  AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return { available: false, reason: `SENTINEL returned ${res.status}` };
+    const data = await res.json();
+    return { available: true, data };
+  } catch (err) {
+    return { available: false, reason: err.name === 'TimeoutError' ? 'SENTINEL timed out' : err.message };
+  }
+}
+
+function buildSentinelBlock(sentinelResult) {
+  const SEP = '══════════════════════════════════════════════';
+
+  if (!sentinelResult.available) {
+    return `
+
+${SEP}
+③ SENTINEL — Compliance Decision
+   Status: Unavailable (${sentinelResult.reason})
+${SEP}
+A2A CONTRIBUTORS
+  ① VERIS    — Trust Verification & Scoring    ✓
+  ② ZERU     — Research & Intelligence         ✓
+  ③ SENTINEL — Compliance Decision             ✗
+${SEP}`;
+  }
+
+  const d = sentinelResult.data;
+  const symbol = {
+    'PROCEED':              '✅',
+    'PROCEED WITH CAUTION': '⚠️',
+    'HIGH RISK':            '🔴',
+    'AVOID':                '⛔',
+    'INSUFFICIENT DATA':    '❓',
+  }[d.verdict] || '—';
+
+  const actions = (d.recommendedActions || [])
+    .map(a => `  ✓ ${a}`).join('\n') || '  ✓ See reasoning above';
+
+  return `
+
+${SEP}
+③ SENTINEL — Compliance Decision
+   Source: SENTINEL Decision Intelligence Agent
+${SEP}
+VERDICT:  ${symbol}  ${d.verdict}
+
+  Trust Score:       ${d.inputs?.trustScore ?? 'N/A'}/100
+  Compliance Score:  ${d.complianceScore ?? 'N/A'}/100
+  Risk Class:        ${d.riskClass}
+  Confidence:        ${d.confidence}
+  Review Period:     ${d.reviewPeriod}
+${SEP}
+REASONING
+${d.reason}
+${SEP}
+RECOMMENDED ACTIONS
+${actions}
+${SEP}
+A2A CONTRIBUTORS
+  ① VERIS    — Trust Verification & Scoring
+  ② ZERU     — Research & Intelligence
+  ③ SENTINEL — Compliance Decision ◄ (this step)
+
+  Three autonomous agents cooperating on CROO · Base Mainnet
+${SEP}`;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PROVIDER LISTENER  (WebSocket to CROO)
 // ════════════════════════════════════════════════════════════════════
 
 const activeConnections = new Set();
@@ -1019,12 +1161,14 @@ async function startProvider(sdkKey, label) {
   if (!sdkKey)                       { console.log(`No SDK key for ${label} — skipping`); return; }
   if (activeConnections.has(sdkKey)) { console.log(`${label} already connected — skipping`); return; }
   activeConnections.add(sdkKey);
+
   try {
     console.log(`Starting ${label} provider...`);
     const provider = new AgentClient(config, sdkKey);
     const stream   = await provider.connectWebSocket();
     reconnectAttempts = 0;
     console.log(`✅ ${label} WebSocket connected`);
+
     stream.on(EventType.NegotiationCreated, async (e) => {
       console.log(`📨 ${label} negotiation:`, e.negotiation_id);
       try {
@@ -1032,13 +1176,16 @@ async function startProvider(sdkKey, label) {
         console.log('✅ Accepted, order:', result.order.orderId);
       } catch (err) { console.error('Accept error:', err.message); }
     });
+
     stream.on(EventType.OrderPaid, async (e) => {
       console.log(`💰 ${label} payment received:`, e.order_id);
       await handleOrder(provider, e.order_id);
     });
+
     stream.on(EventType.OrderCompleted, (e) => {
       console.log(`🎉 ${label} order settled:`, e.order_id);
     });
+
     stream.on('close', () => {
       activeConnections.delete(sdkKey);
       reconnectAttempts++;
@@ -1046,6 +1193,7 @@ async function startProvider(sdkKey, label) {
       console.log(`${label} closed — reconnecting in ${delay / 1000}s`);
       setTimeout(() => startProvider(sdkKey, label), delay);
     });
+
     stream.on('error', (err) => console.error(`${label} WS error:`, err.message));
   } catch (err) {
     activeConnections.delete(sdkKey);
@@ -1057,7 +1205,7 @@ async function startProvider(sdkKey, label) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// KEEP-ALIVE
+// KEEP-ALIVE  (prevents Railway/Render sleeping)
 // ════════════════════════════════════════════════════════════════════
 
 setInterval(async () => {
