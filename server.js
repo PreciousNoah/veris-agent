@@ -8,8 +8,6 @@ import fs from 'fs';
 
 const app = express();
 app.use(cors());
-
-// FIX: parse JSON and plain text — CROO orders sometimes send raw text bodies
 app.use(express.json({ strict: false }));
 app.use(express.text({ type: '*/*' }));
 
@@ -35,14 +33,61 @@ const PROVIDER_SDK_KEY  = process.env.CROO_API_KEY        || credentials.sdkKey;
 const REQUESTER_SDK_KEY = process.env.CROO_REQUESTER_SDK_KEY;
 const STORE_SDK_KEY     = process.env.CROO_STORE_SDK_KEY;
 
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// ════════════════════════════════════════════════════════════════════
+// INPUT TYPE DETECTION
+// Detects what kind of identifier was submitted so VERIS can explain
+// clearly what it received and what type of audit will run.
+// ════════════════════════════════════════════════════════════════════
+
+function detectInputType(input) {
+  if (!input) return { type: 'unknown', label: 'Unknown input', hint: '' };
+  const s = input.trim();
+
+  // UUID — CROO agent IDs
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) {
+    return { type: 'uuid', label: 'CROO Agent ID (UUID)', hint: 'Running agent due diligence.' };
+  }
+
+  // Ethereum / EVM wallet or contract
+  if (/^0x[a-fA-F0-9]{40}$/.test(s)) {
+    return { type: 'evm_address', label: 'EVM Wallet / Contract Address', hint: 'Running project due diligence on this address.' };
+  }
+
+  // Solana address
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s) && !s.includes(' ')) {
+    return { type: 'solana_address', label: 'Solana Address', hint: 'Running project due diligence on this address.' };
+  }
+
+  // GitHub URL or shorthand
+  if (/github\.com\//i.test(s)) {
+    return { type: 'github', label: 'GitHub Repository', hint: 'Running project due diligence using this repository.' };
+  }
+
+  // General URL / website
+  if (/^https?:\/\//i.test(s) || /^www\./i.test(s)) {
+    return { type: 'url', label: 'Website URL', hint: 'Running project due diligence on this website.' };
+  }
+
+  // CROO agent store URL pattern
+  if (/agent\.croo\.network/i.test(s)) {
+    return { type: 'croo_url', label: 'CROO Agent Store URL', hint: 'Running agent due diligence.' };
+  }
+
+  // Known agent-like names
+  if (/\bagent\b|\bbot\b|\bai\b|\bauto/i.test(s)) {
+    return { type: 'agent_name', label: 'Agent Name', hint: 'Running agent due diligence.' };
+  }
+
+  // Default — treat as project name
+  return { type: 'project_name', label: 'Project Name', hint: 'Running project due diligence.' };
+}
 
 // ════════════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════════════
 
-// Safely parse a request body that might be JSON string, JSON object,
-// or plain text (all three come in from different CROO order formats)
 function parseBody(body) {
   if (!body) return null;
   if (typeof body === 'object') return body;
@@ -85,7 +130,6 @@ function parseRecommendationFromReport(report) {
 
 function parseSignalsFromReport(report) {
   if (!report) return { verified: 0, total: 0 };
-  // Try all known patterns in the report
   const patterns = [
     /SIGNAL COVERAGE:\s+(\d+)\/(\d+)/i,
     /(\d+)\/(\d+)\s+signals\s+verifiable/i,
@@ -97,7 +141,6 @@ function parseSignalsFromReport(report) {
     const m = report.match(p);
     if (m) return { verified: parseInt(m[1]), total: parseInt(m[2]) };
   }
-  // Count YES signals directly from the report as fallback
   const yesCount = (report.match(/^\s+\+\s*\d+\s+/gm) || []).length;
   return { verified: yesCount, total: yesCount > 0 ? 27 : 0 };
 }
@@ -135,32 +178,193 @@ function receiptToTrustJSON(receipt, cached = true) {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// INSUFFICIENT DATA EXPLANATION
+// Called when a report comes back with N/A scores.
+// Generates a clear, human-readable explanation of why.
+// ════════════════════════════════════════════════════════════════════
+
+function buildInsufficientDataBlock(entityName, inputType, entityType) {
+  const SEP = '══════════════════════════════════════════════';
+  const isAgent = entityType === 'agent';
+
+  const whatWeMissed = isAgent
+    ? [
+        'Agent listing on CROO store',
+        'Service description (30+ characters)',
+        'Pricing and SLA configuration',
+        'Public web presence or GitHub',
+        'Reachable endpoint URL',
+      ]
+    : [
+        'Founders or team publicly named',
+        'Official website or documentation',
+        'GitHub repository',
+        'Whitepaper or technical docs',
+        'Live product confirmation',
+      ];
+
+  const howToHelp = isAgent
+    ? [
+        'Provide the CROO agent ID (UUID format)',
+        'Add the agent endpoint URL for live testing',
+        'Ensure the agent is listed and online on CROO store',
+        'Add a service description of 30+ characters to the listing',
+      ]
+    : [
+        'Provide the official website URL (e.g. https://yourproject.xyz)',
+        'Provide the GitHub repository URL',
+        'Provide the Twitter/X handle',
+        'Use the full project name as it appears publicly',
+      ];
+
+  const inputNote = inputType && inputType.type !== 'project_name' && inputType.type !== 'agent_name'
+    ? `\nInput detected as: ${inputType.label}. ${inputType.hint}`
+    : '';
+
+  return `
+${SEP}
+⚠  VERIS COULD NOT SCORE THIS ENTITY
+${SEP}
+Entity:  ${entityName}${inputNote}
+
+VERIS ran a full search across multiple sources but could not
+confirm enough signals to produce a reliable trust score.
+
+This does NOT mean the entity is illegitimate.
+It means there is insufficient publicly verifiable evidence.
+
+EVIDENCE GAPS DETECTED
+${whatWeMissed.map(s => `  ✗ ${s}`).join('\n')}
+
+HOW TO GET A BETTER RESULT
+${howToHelp.map((s, i) => `  ${i + 1}. ${s}`).join('\n')}
+
+WHAT HAPPENS NEXT
+  Submit again with the additional information above.
+  VERIS will re-run the full evidence pipeline.
+  Scores are only produced when evidence meets the minimum
+  confidence threshold — not scored means not penalized.
+${SEP}`;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// RICHER FINAL REASONING
+// Appends a score explanation block after the VERDICT section.
+// Shows exactly why points were gained or lost.
+// ════════════════════════════════════════════════════════════════════
+
+function buildReasoningBlock(report) {
+  // Extract key numbers from report
+  const legitimacy   = report.match(/LEGITIMACY:\s+(\d+)\/100/)?.[1];
+  const maturity     = report.match(/MATURITY:\s+(\d+)\/100/)?.[1];
+  const confidence   = report.match(/CONFIDENCE:.*?(\d+)%/)?.[1];
+  const identity     = report.match(/Identity:\s+(\d+)\/100/)?.[1];
+  const transparency = report.match(/Transparency:\s+(\d+)\/100/)?.[1];
+  const verification = report.match(/Verification:\s+(\d+)\/100/)?.[1];
+  const reputation   = report.match(/Reputation:\s+(\d+)\/100/)?.[1];
+
+  if (!legitimacy) return ''; // N/A report — no reasoning block needed
+
+  const lines = [];
+
+  // Explain each dimension
+  const dims = [
+    { name: 'Identity',     score: parseInt(identity     || '0') },
+    { name: 'Transparency', score: parseInt(transparency || '0') },
+    { name: 'Verification', score: parseInt(verification || '0') },
+    { name: 'Reputation',   score: parseInt(reputation   || '0') },
+  ];
+
+  lines.push('SCORE EXPLANATION');
+  lines.push('');
+
+  for (const d of dims) {
+    if (d.score >= 75) {
+      lines.push(`  ${d.name} (${d.score}/100) — Strong. Multiple confirmed signals with official sources.`);
+    } else if (d.score >= 50) {
+      lines.push(`  ${d.name} (${d.score}/100) — Partial. Some signals confirmed but gaps remain.`);
+    } else if (d.score >= 25) {
+      lines.push(`  ${d.name} (${d.score}/100) — Weak. Most signals in this dimension could not be verified.`);
+    } else {
+      lines.push(`  ${d.name} (${d.score}/100) — Minimal. Little to no verifiable evidence in this dimension.`);
+    }
+  }
+
+  lines.push('');
+
+  // Confidence explanation
+  const conf = parseInt(confidence || '0');
+  if (conf >= 80) {
+    lines.push(`  Confidence (${conf}%) — High. Strong multi-source agreement across official and media sources.`);
+  } else if (conf >= 60) {
+    lines.push(`  Confidence (${conf}%) — Moderate. Reasonable evidence base, but some areas have limited coverage.`);
+  } else if (conf >= 40) {
+    lines.push(`  Confidence (${conf}%) — Low. Limited sources found. Score should be treated as provisional.`);
+  } else {
+    lines.push(`  Confidence (${conf}%) — Very low. Minimal evidence. Re-run with a website or GitHub URL for better results.`);
+  }
+
+  // What pulled the score down
+  const weakDims = dims.filter(d => d.score < 50);
+  if (weakDims.length > 0) {
+    lines.push('');
+    lines.push('  WHY THE SCORE IS NOT HIGHER');
+    for (const d of weakDims) {
+      if (d.name === 'Identity') {
+        lines.push('    → Founders and team could not be publicly identified from available sources.');
+      } else if (d.name === 'Transparency') {
+        lines.push('    → Whitepaper, roadmap, or technical documentation could not be confirmed.');
+      } else if (d.name === 'Verification') {
+        lines.push('    → Open source code, GitHub activity, or security audit could not be verified.');
+      } else if (d.name === 'Reputation') {
+        lines.push('    → Project longevity, media coverage, or community signals were insufficient.');
+      }
+    }
+  }
+
+  // What to do to improve
+  if (weakDims.length > 0 || conf < 60) {
+    lines.push('');
+    lines.push('  HOW TO IMPROVE THIS SCORE');
+    if (dims.find(d => d.name === 'Identity' && d.score < 50)) {
+      lines.push('    1. Provide the official website with a team page.');
+    }
+    if (dims.find(d => d.name === 'Verification' && d.score < 50)) {
+      lines.push('    2. Provide the GitHub repository URL.');
+    }
+    if (conf < 60) {
+      lines.push('    3. Re-run with the official URL — more sources produce higher confidence.');
+    }
+  }
+
+  const SEP = '══════════════════════════════════════════════';
+  return `
+${SEP}
+${lines.join('\n')}
+${SEP}`;
+}
+
+// ════════════════════════════════════════════════════════════════════
 // API KEY MIDDLEWARE
-// Skips gracefully if api_keys table doesn't exist yet
 // ════════════════════════════════════════════════════════════════════
 
 async function requireApiKey(req, res, next) {
-  if (!supabase) return next(); // dev mode — no Supabase
-
+  if (!supabase) return next();
   const key = req.headers['x-api-key'] || req.query.api_key;
   if (!key) {
     return res.status(401).json({
       error: 'API key required. Pass X-Api-Key header or ?api_key= query param.',
     });
   }
-
   try {
     const { data, error } = await supabase
       .from('api_keys')
       .select('*')
       .eq('key', key)
       .single();
-
     if (error || !data) {
       return res.status(403).json({ error: 'Invalid API key.' });
     }
-
-    // Reset daily counter if it's a new day
     const today = new Date().toISOString().slice(0, 10);
     if (data.last_reset !== today) {
       await supabase.from('api_keys')
@@ -168,23 +372,18 @@ async function requireApiKey(req, res, next) {
         .eq('key', key);
       data.requests_today = 0;
     }
-
     const limit = data.daily_limit || 100;
     if (data.requests_today >= limit) {
       return res.status(429).json({ error: `Daily limit of ${limit} reached.` });
     }
-
-    // Increment (fire-and-forget)
     supabase.from('api_keys')
       .update({ requests_today: data.requests_today + 1 })
       .eq('key', key)
       .then(() => {});
-
     req.apiKey = data;
     next();
   } catch {
-    // Table doesn't exist yet — let through so tests aren't blocked
-    console.warn('api_keys table not found — skipping auth. Run the Supabase migration.');
+    console.warn('api_keys table not found — skipping auth.');
     next();
   }
 }
@@ -228,38 +427,40 @@ app.get('/', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// CROO ROUTES — no auth, CROO handles that via SDK
+// CROO ROUTES
 // ════════════════════════════════════════════════════════════════════
 
 app.post('/audit', async (req, res) => {
-  // Handle JSON object, JSON string, or plain text body
   const body = parseBody(req.body);
   let requirements = body?.requirements;
-
-  // If still no requirements, treat the whole body as requirements
   if (!requirements && body && typeof body === 'object') {
     requirements = body;
   }
-
-  // Last resort: plain text body → treat as project name
   if (!requirements && typeof req.body === 'string' && req.body.trim()) {
     requirements = { type: 'project', name: req.body.trim() };
   }
-
   if (!requirements) {
     return res.status(400).json({ error: 'requirements object needed' });
   }
-
   try {
     let report = await runVERIS(requirements, REQUESTER_SDK_KEY);
 
-    // A2A enrichment — ZERU research then SENTINEL decision
+    // Append insufficient data block if score is N/A
+    if (report.includes('N/A (Insufficient Evidence)') || report.includes('INSUFFICIENT DATA')) {
+      const inputType = detectInputType(requirements.name || requirements.agentId || '');
+      report += buildInsufficientDataBlock(
+        requirements.name || requirements.agentId || 'Unknown',
+        inputType,
+        requirements.type || 'project'
+      );
+    } else {
+      // Append richer reasoning block
+      report += buildReasoningBlock(report);
+    }
+
     if (requirements.type === 'project' && requirements.name) {
-      // Step 1: ZERU research
       const zeruResult = await fetchZeruEnrichment(requirements.name);
       report += buildEnrichmentBlock(zeruResult, requirements.name);
-
-      // Step 2: SENTINEL decision (uses VERIS score + ZERU sentiment/risks)
       const scoreMatch = report.match(/LEGITIMACY:\s+(\d+)\/100/i);
       const confMatch  = report.match(/CONFIDENCE:.*?(\d+)%/);
       const trustScore = scoreMatch ? parseInt(scoreMatch[1]) : null;
@@ -275,7 +476,6 @@ app.post('/audit', async (req, res) => {
   }
 });
 
-// ── POST /compare  (agent trust compare — existing CROO format) ──────
 app.post('/compare', async (req, res) => {
   const body   = parseBody(req.body);
   const agents = body?.agents;
@@ -290,23 +490,16 @@ app.post('/compare', async (req, res) => {
   }
 });
 
-// ── GET /compare/projects?a=Aave&b=Compound  (judge-friendly) ────────
-// Returns structured JSON comparison — no text report, directly readable
 app.get('/compare/projects', requireApiKey, async (req, res) => {
   const names = [req.query.a, req.query.b, req.query.c, req.query.d, req.query.e]
     .filter(Boolean)
     .map(n => n.trim());
-
   if (names.length < 2) {
     return res.status(400).json({ error: 'Pass at least ?a=ProjectA&b=ProjectB' });
   }
-
   console.log(`\n⚖️ VERIS Project Compare: ${names.join(' vs ')}`);
-
-  // Run all audits in parallel — use cache where available
   const results = await Promise.all(names.map(async (name) => {
     try {
-      // Check cache first
       const cached = await getCachedReceipt(name);
       if (cached) {
         const derivedRisk = (() => {
@@ -348,7 +541,6 @@ app.get('/compare/projects', requireApiKey, async (req, res) => {
           error:           null,
         };
       }
-      // Run fresh audit
       const report         = await runVERIS({ type: 'project', name }, REQUESTER_SDK_KEY);
       const score          = parseScoreFromReport(report);
       const signals        = parseSignalsFromReport(report);
@@ -378,15 +570,11 @@ app.get('/compare/projects', requireApiKey, async (req, res) => {
       return { entity: name, trustScore: null, riskLevel: 'Error', error: err.message };
     }
   }));
-
-  // Rank by trust score
   const ranked = [...results]
     .filter(r => r.trustScore !== null)
     .sort((a, b) => b.trustScore - a.trustScore);
-
   const best  = ranked[0] || null;
   const worst = ranked[ranked.length - 1] || null;
-
   let verdict = 'Insufficient data to compare.';
   if (best && best.trustScore >= 65) {
     verdict = `${best.entity} has the strongest verifiable trust signals (${best.trustScore}/100). `;
@@ -398,13 +586,12 @@ app.get('/compare/projects', requireApiKey, async (req, res) => {
   } else if (best) {
     verdict = `All compared entities have limited verifiable signals. Strongest: ${best.entity} (${best.trustScore}/100). Proceed with caution across the board.`;
   }
-
   res.json({
-    compared:   names,
-    results:    ranked,
-    best:       best?.entity || null,
+    compared:  names,
+    results:   ranked,
+    best:      best?.entity || null,
     verdict,
-    timestamp:  new Date().toISOString(),
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -417,8 +604,6 @@ app.get('/receipts', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(50);
     if (error) throw error;
-
-    // Filter out junk entity names from old malformed CROO orders
     const clean = (name) => {
       if (!name) return false;
       if (name.startsWith('{')) return false;
@@ -429,7 +614,6 @@ app.get('/receipts', async (req, res) => {
       if (name.includes('requirements')) return false;
       return true;
     };
-
     const receipts = (data || []).filter(r => clean(r.entity_name));
     res.json({ receipts, count: receipts.length });
   } catch (err) {
@@ -437,7 +621,6 @@ app.get('/receipts', async (req, res) => {
   }
 });
 
-// Judge-friendly summary — groups by entity, shows latest score per entity
 app.get('/receipts/summary', async (req, res) => {
   if (!supabase) return res.json({ entities: [], note: 'Supabase not configured' });
   try {
@@ -447,23 +630,18 @@ app.get('/receipts/summary', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw error;
-
-    // Filter out junk entity names — old CROO orders where raw JSON got saved as name
     const isCleanName = (name) => {
       if (!name) return false;
-      if (name.startsWith('{')) return false;       // raw JSON object
-      if (name.startsWith('"')) return false;       // quoted string
-      if (name.length > 60)  return false;          // suspiciously long
-      if (name.includes('\\')) return false;        // escaped JSON
-      if (name.includes('type')) return false;      // JSON field leaking in
+      if (name.startsWith('{')) return false;
+      if (name.startsWith('"')) return false;
+      if (name.length > 60)  return false;
+      if (name.includes('\\')) return false;
+      if (name.includes('type')) return false;
       return true;
     };
-
-    // Derive risk level from score when stored value is missing
     const deriveRisk = (score, stored, type) => {
       if (stored && stored !== 'Unknown' && stored !== 'unknown') return stored;
       if (score === null || score === undefined) return 'Unknown';
-      // Agents use a separate trust model
       if (type === 'agent') {
         if (score >= 76) return 'Trusted';
         if (score >= 56) return 'Established';
@@ -471,7 +649,6 @@ app.get('/receipts/summary', async (req, res) => {
         if (score >= 16) return 'Unverified';
         return 'Critical';
       }
-      // Projects
       if (score >= 80) return 'Low';
       if (score >= 65) return 'Low-Medium';
       if (score >= 50) return 'Medium';
@@ -479,22 +656,15 @@ app.get('/receipts/summary', async (req, res) => {
       if (score <= 5)  return 'Critical';
       return 'High';
     };
-
-    // Deduplicate — keep latest per entity name
     const seen = new Map();
     for (const row of (data || [])) {
       if (!isCleanName(row.entity_name)) continue;
       if (!seen.has(row.entity_name)) seen.set(row.entity_name, row);
     }
-
     const entities = [...seen.values()].sort((a, b) => {
-      // Sort: projects by score desc, then agents
-      if (a.entity_type !== b.entity_type) {
-        return a.entity_type === 'project' ? -1 : 1;
-      }
+      if (a.entity_type !== b.entity_type) return a.entity_type === 'project' ? -1 : 1;
       return (b.score || 0) - (a.score || 0);
     });
-
     res.json({
       totalEntitiesAudited: entities.length,
       lastUpdated:          entities[0]?.created_at || null,
@@ -532,17 +702,13 @@ app.get('/receipts/:entityId', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// TRUST API  —  GET /trust/:entityName
-// Returns a structured JSON trust score.
-// This is what ZERU and other agents consume.
+// TRUST API
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/trust/:entityName', requireApiKey, async (req, res) => {
   const entityName   = req.params.entityName.trim();
   const entityType   = req.query.type || 'project';
   const forceRefresh = req.query.refresh === 'true';
-
-  // Agent audits bypass cache — agent status changes frequently
   if (entityType === 'agent') {
     try {
       const agentId = req.query.agentId || entityName;
@@ -555,37 +721,30 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
         serviceDescription: req.query.description || null,
         category:           req.query.category || 'general',
       }, REQUESTER_SDK_KEY);
-
-      // Parse agent report metrics
       const overallMatch  = report.match(/OVERALL SCORE:\s+(\d+)\/100/);
       const confMatch     = report.match(/CONFIDENCE:\s+(High|Medium|Low)/i);
-      const recMatch      = report.match(/RECOMMENDATION:\s+[^\s]+\s+([A-Z ]+)\n/);
       const coverageMatch = report.match(/SIGNAL COVERAGE:\s+(\d+)\/(\d+)/);
       const l1Match       = report.match(/LAYER 1[^\d]*(\d+)\/100/);
       const l2Match       = report.match(/LAYER 2[^\d]*(\d+)\/100/);
       const l3Match       = report.match(/LAYER 3[^\d]*(\d+)\/100/);
-
       const layerScores = {
         metadata: l1Match ? parseInt(l1Match[1]) : null,
         web:      l2Match ? parseInt(l2Match[1]) : null,
         live:     l3Match ? parseInt(l3Match[1]) : null,
       };
       const trustScore = overallMatch ? parseInt(overallMatch[1]) : null;
-
       return res.json({
         entity:          entityName,
         entityId:        agentId,
         entityType:      'agent',
         trustScore,
         confidence:      confMatch ? confMatch[1] : 'Low',
-        // Agent trust model — separate bands from project model
         trustBand:       deriveAgentRiskLevel(trustScore, layerScores),
         riskLevel:       deriveAgentRiskLevel(trustScore, layerScores),
         recommendation:  deriveAgentRecommendation(trustScore, layerScores),
         signalsVerified: coverageMatch ? parseInt(coverageMatch[1]) : 0,
         signalsTotal:    coverageMatch ? parseInt(coverageMatch[2]) : 15,
         layerScores,
-        // Agent-specific context
         agentTrustModel: {
           bands: '0-15 Critical | 16-35 Unverified | 36-55 Emerging | 56-75 Established | 76-100 Trusted',
           note: 'Agent scores reflect ecosystem maturity. A new agent with a working endpoint is Emerging, not Critical.',
@@ -599,13 +758,10 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
       return res.status(500).json({ error: err.message });
     }
   }
-
-  // Project path (unchanged)
   if (!forceRefresh) {
     const cached = await getCachedReceipt(entityName);
     if (cached) return res.json(receiptToTrustJSON(cached, true));
   }
-
   try {
     const report         = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
     const score          = parseScoreFromReport(report);
@@ -613,7 +769,6 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
     const recommendation = parseRecommendationFromReport(report);
     const signals        = parseSignalsFromReport(report);
     const incidents      = parseIncidentsFromReport(report);
-
     let riskLevel = 'Unknown';
     if (score !== null) {
       if (score >= 70)      riskLevel = 'Low';
@@ -623,7 +778,6 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
       else                  riskLevel = 'Critical';
     }
     if (incidents.length > 0) riskLevel = 'Critical';
-
     res.json({
       entity:          entityName,
       entityId:        entityName.toLowerCase().trim(),
@@ -646,24 +800,13 @@ app.get('/trust/:entityName', requireApiKey, async (req, res) => {
 
 // ════════════════════════════════════════════════════════════════════
 // AGENT TRUST MODEL
-// Agents are judged differently from projects.
-// A new agent with a working endpoint is NOT the same as FTX.
-// These bands reflect ecosystem maturity, not just raw score.
-//
-//  0-15   Critical      — failed live tests, or confirmed fraud
-//  16-35  Unverified    — no metadata, no web presence, no live test
-//  36-55  Emerging      — some signals but limited verification
-//  56-75  Established   — metadata + web presence OR live verified
-//  76-100 Trusted       — all three layers confirmed
 // ════════════════════════════════════════════════════════════════════
+
 function deriveAgentRiskLevel(score, layerScores) {
   if (score === null) return 'Unknown';
-  const liveWorking = (layerScores?.live  || 0) > 0;
-  const webWorking  = (layerScores?.web   || 0) > 0;
+  const liveWorking = (layerScores?.live     || 0) > 0;
+  const webWorking  = (layerScores?.web      || 0) > 0;
   const metaWorking = (layerScores?.metadata || 0) > 0;
-
-  // If live endpoint is working, agent is at minimum Emerging
-  // regardless of metadata availability
   if (score >= 76) return 'Trusted';
   if (score >= 56) return 'Established';
   if (score >= 36 || (liveWorking && score >= 20)) return 'Emerging';
@@ -684,16 +827,12 @@ function deriveAgentRecommendation(score, layerScores) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// EVIDENCE API  —  GET /evidence/:entityName
-// Returns raw structured evidence — not a score.
-// Lets other agents build their own models on top of VERIS data.
+// EVIDENCE API
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
   const entityName   = req.params.entityName.trim();
   const forceRefresh = req.query.refresh === 'true';
-
-  // 1. Check for cached raw_evidence in Supabase
   if (!forceRefresh && supabase) {
     try {
       const { data } = await supabase
@@ -704,7 +843,6 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
-
       if (data?.raw_evidence) {
         return res.json({
           entity:    data.entity_name,
@@ -714,30 +852,23 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
           timestamp: data.created_at,
         });
       }
-    } catch { /* cache miss — fall through */ }
+    } catch { /* cache miss */ }
   }
-
-  // 2. Run pipeline and extract evidence from report
   try {
-    const report = await runVERIS(
-      { type: 'project', name: entityName },
-      REQUESTER_SDK_KEY
-    );
-
+    const report         = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
     const signals        = parseSignalsFromReport(report);
     const githubMatch    = report.match(/Active GitHub[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
     const auditMatch     = report.match(/Security audit found[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
     const whitepaperMatch= report.match(/Whitepaper found[^\n]*\n\s+└─ (https?:\/\/[^\s]+)/);
     const foundedMatch   = report.match(/Founded:\s+(\d{4})/);
     const incidents      = parseIncidentsFromReport(report);
-
     res.json({
       entity: entityName,
       evidence: {
-        github:      githubMatch     ? [githubMatch[1]]     : null,
-        whitepaper:  whitepaperMatch ? [whitepaperMatch[1]] : null,
-        audit:       auditMatch      ? [auditMatch[1]]      : null,
-        founded:     foundedMatch    ? parseInt(foundedMatch[1]) : null,
+        github:      githubMatch      ? [githubMatch[1]]      : null,
+        whitepaper:  whitepaperMatch  ? [whitepaperMatch[1]]  : null,
+        audit:       auditMatch       ? [auditMatch[1]]       : null,
+        founded:     foundedMatch     ? parseInt(foundedMatch[1]) : null,
         openSource:  report.includes('Open source confirmed'),
         liveProduct: report.includes('Live product confirmed'),
         incidents,
@@ -745,9 +876,7 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
       signalCoverage: {
         verified: signals.verified,
         total:    signals.total,
-        pct:      signals.total > 0
-                    ? Math.round((signals.verified / signals.total) * 100)
-                    : 0,
+        pct:      signals.total > 0 ? Math.round((signals.verified / signals.total) * 100) : 0,
       },
       cached:    false,
       timestamp: new Date().toISOString(),
@@ -759,18 +888,13 @@ app.get('/evidence/:entityName', requireApiKey, async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// A2A DEMO  —  GET /a2a/demo/:entityName
-// Shows VERIS + ZERU working together.
-// ZERU_API_URL env var points at your research agent.
+// A2A DEMO
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
   const entityName = req.params.entityName.trim();
   const zeruUrl    = process.env.ZERU_API_URL;
-
   const result = { entity: entityName, veris: null, research: null, combined: null };
-
-  // VERIS trust — force refresh so we never serve stale cached receipts
   try {
     const report = await runVERIS({ type: 'project', name: entityName }, REQUESTER_SDK_KEY);
     result.veris = {
@@ -785,17 +909,12 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
   } catch (err) {
     result.veris = { error: err.message };
   }
-
-  // ZERU research (if configured)
   if (zeruUrl) {
     try {
-      const zeruRes = await fetch(
-        `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
-        {
-          headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
-          signal:  AbortSignal.timeout(30000),
-        }
-      );
+      const zeruRes = await fetch(`${zeruUrl}/research/${encodeURIComponent(entityName)}`, {
+        headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
+        signal:  AbortSignal.timeout(30000),
+      });
       result.research = zeruRes.ok ? await zeruRes.json() : { error: `ZERU returned ${zeruRes.status}` };
     } catch (err) {
       result.research = { error: `ZERU unavailable: ${err.message}` };
@@ -803,8 +922,6 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
   } else {
     result.research = { note: 'Set ZERU_API_URL env var to enable A2A composability demo' };
   }
-
-  // Combined signal
   if (result.veris?.trustScore !== null && result.veris?.trustScore !== undefined) {
     const score = result.veris.trustScore;
     result.combined = {
@@ -818,187 +935,8 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
       timestamp:       new Date().toISOString(),
     };
   }
-
   res.json(result);
 });
-
-// ════════════════════════════════════════════════════════════════════
-// CROO ORDER HANDLER
-// ════════════════════════════════════════════════════════════════════
-
-async function handleOrder(provider, orderId) {
-  try {
-    const order = await provider.getOrder(orderId);
-    console.log('📋 Order received:', orderId);
-
-    const rawRequirement =
-      order.requirement     ||
-      order.requirements    ||
-      order.requirementText ||
-      order.input           ||
-      order.data            ||
-      '';
-
-    let requirements = {};
-    if (rawRequirement) {
-      let parsed = parseBody(rawRequirement);
-
-      // CROO wraps payloads in layers. Known shapes observed in production:
-      // Layer 1: { "text": "<json string>" }
-      // Layer 2: { "requirements": { "type": "project", ... } }
-      // Layer 3: { "type": "project", "name": "..." }  ← actual requirement
-      // Unwrap until we hit an object with a recognizable "type" field.
-
-      let unwrapDepth = 0;
-      while (parsed && typeof parsed === 'object' && unwrapDepth < 5) {
-        // Recognised payload shapes — stop unwrapping
-        if (parsed.type) break;                              // standard audit
-        if (parsed.entityType && parsed.entityId) break;     // trust receipt
-        if (Array.isArray(parsed.agents)) break;             // trust compare
-
-        // Unwrap { text: "<json string>" }
-        if (typeof parsed.text === 'string') {
-          const inner = parseBody(parsed.text);
-          if (inner && typeof inner === 'object') { parsed = inner; unwrapDepth++; continue; }
-        }
-
-        // Unwrap { requirements: { type: "project", ... } }
-        if (parsed.requirements && typeof parsed.requirements === 'object') {
-          parsed = parsed.requirements; unwrapDepth++; continue;
-        }
-
-        // Unwrap { requirements: "<json string>" }
-        if (typeof parsed.requirements === 'string') {
-          const inner = parseBody(parsed.requirements);
-          if (inner && typeof inner === 'object') { parsed = inner; unwrapDepth++; continue; }
-        }
-
-        // Nothing left to unwrap
-        break;
-      }
-
-      if (unwrapDepth > 0) {
-        console.log(`  📦 Unwrapped ${unwrapDepth} layer(s) of CROO wrapping`);
-      }
-
-      // ── FIX: Handle ALL recognized payload shapes ──────────────────────
-      if (parsed && typeof parsed === 'object' && parsed.type) {
-        requirements = parsed;
-      } else if (parsed && typeof parsed === 'object' && parsed.entityType && parsed.entityId) {
-        requirements = parsed;  // ← Trust receipt requests
-      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.agents)) {
-        requirements = parsed;  // ← Trust compare requests
-      } else if (parsed && typeof parsed === 'object' && parsed.name) {
-        requirements = { type: 'project', ...parsed };
-      } else {
-        requirements = { type: 'project', name: String(rawRequirement).trim() };
-      }
-    }
-
-    if (!requirements.type) requirements.type = 'project';
-    if (requirements.type === 'project' && !requirements.name) {
-      requirements.name = String(rawRequirement || 'Unknown').trim();
-    }
-
-    console.log('📋 Parsed requirements:', JSON.stringify(requirements));
-
-    let report = '';
-
-    // ── Route by service type ────────────────────────────────────────
-    // Trust Compare — requirements has an "agents" array
-    if (Array.isArray(requirements.agents) && requirements.agents.length >= 2) {
-      console.log(`  📊 Trust Compare: ${requirements.agents.length} agents`);
-      report = await handleCompare(requirements.agents, REQUESTER_SDK_KEY);
-
-    // Trust Receipt History — requirements has entityType + entityId
-    } else if (requirements.entityId && requirements.entityType) {
-      console.log(`  🗄️ Trust Receipt: ${requirements.entityType} / ${requirements.entityId}`);
-      const receipts = await getTrustReceipts(requirements.entityId);
-
-      if (!receipts || receipts.length === 0) {
-        report = `VERIS TRUST RECEIPT HISTORY
-══════════════════════════════════════════════
-Entity:     ${requirements.entityId}
-Type:       ${requirements.entityType}
-Queried:    ${new Date().toISOString()}
-══════════════════════════════════════════════
-No audit history found for this entity.
-Run a trust audit first to generate receipts.
-══════════════════════════════════════════════
-Auditor: VERIS · CROO v1 · Base Mainnet`;
-      } else {
-        const latest   = receipts[0];
-        const oldest   = receipts[receipts.length - 1];
-        const trend    = receipts.length > 1
-          ? (latest.score - oldest.score > 0 ? '↑ Improving'
-            : latest.score - oldest.score < 0 ? '↓ Declining'
-            : '→ Stable')
-          : 'Only one audit on record';
-        const scoreHistory = receipts
-          .map((r, i) => `  ${i + 1}. ${new Date(r.created_at).toLocaleDateString()} — Score: ${r.score ?? 'N/A'}/100  Risk: ${r.risk_level || 'Unknown'}`)
-          .join('\n');
-
-        report = `VERIS TRUST RECEIPT HISTORY
-══════════════════════════════════════════════
-Entity:     ${latest.entity_name || requirements.entityId}
-Type:       ${requirements.entityType}
-Audits:     ${receipts.length} on record
-Queried:    ${new Date().toISOString()}
-══════════════════════════════════════════════
-LATEST SCORE
-  Score:      ${latest.score ?? 'N/A'}/100
-  Risk Level: ${latest.risk_level || 'Unknown'}
-  Signals:    ${latest.signals_verified || 0}/${latest.signals_total || 0} verified
-  Date:       ${new Date(latest.created_at).toLocaleString()}
-══════════════════════════════════════════════
-SCORE TREND
-  ${trend}
-  Earliest:  ${oldest.score ?? 'N/A'}/100 (${new Date(oldest.created_at).toLocaleDateString()})
-  Latest:    ${latest.score ?? 'N/A'}/100 (${new Date(latest.created_at).toLocaleDateString()})
-  Change:    ${receipts.length > 1 ? (latest.score - oldest.score > 0 ? '+' : '') + (latest.score - oldest.score) + ' points' : 'N/A'}
-══════════════════════════════════════════════
-AUDIT HISTORY
-${scoreHistory}
-══════════════════════════════════════════════
-Auditor: VERIS · CROO v1 · Base Mainnet`;
-      }
-
-    // Standard trust audit — default path
-    } else {
-      if (!requirements.type) requirements.type = 'project';
-      if (requirements.type === 'project' && !requirements.name) {
-        requirements.name = String(rawRequirement || 'Unknown').trim();
-      }
-
-      report = await runVERIS(requirements, REQUESTER_SDK_KEY);
-
-      // A2A enrichment — ZERU then SENTINEL (project audits only)
-      if (requirements.type === 'project' && requirements.name) {
-        console.log(`  🔗 A2A: calling ZERU for ${requirements.name}...`);
-        const zeruResult = await fetchZeruEnrichment(requirements.name);
-        console.log(`  🔗 ZERU: ${zeruResult.available ? 'responded' : zeruResult.reason}`);
-        report += buildEnrichmentBlock(zeruResult, requirements.name);
-
-        console.log(`  🔗 A2A: calling SENTINEL for compliance decision...`);
-        const scoreMatch = report.match(/LEGITIMACY:\s+(\d+)\/100/i);
-        const confMatch  = report.match(/CONFIDENCE:.*?(\d+)%/);
-        const trustScore = scoreMatch ? parseInt(scoreMatch[1]) : null;
-        const confidence = confMatch  ? parseInt(confMatch[1])  : 50;
-        const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult);
-        console.log(`  🔗 SENTINEL: ${sentinelResult.available ? sentinelResult.data?.verdict : sentinelResult.reason}`);
-        report += buildSentinelBlock(sentinelResult);
-      }
-    }
-
-    const delivery = await provider.deliverOrder(orderId, {
-      deliverableType: DeliverableType.Text,
-      deliverableText: report,
-    });
-    console.log('📦 Delivered:', delivery.txHash);
-  } catch (err) {
-    console.error('Order handling error:', err.message);
-  }
-}
 
 // ════════════════════════════════════════════════════════════════════
 // A2A ENRICHMENT FUNCTIONS
@@ -1006,20 +944,16 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
 
 async function fetchZeruEnrichment(entityName) {
   const zeruUrl = process.env.ZERU_API_URL;
-  if (!zeruUrl) {
-    return { available: false, reason: 'ZERU_API_URL not configured' };
-  }
+  if (!zeruUrl) return { available: false, reason: 'ZERU_API_URL not configured' };
   try {
     const res = await fetch(
       `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
       {
         headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
-        signal:  AbortSignal.timeout(20000), // 20s — fail fast rather than risk gateway 502
+        signal:  AbortSignal.timeout(20000),
       }
     );
-    if (!res.ok) {
-      return { available: false, reason: `ZERU returned ${res.status}` };
-    }
+    if (!res.ok) return { available: false, reason: `ZERU returned ${res.status}` };
     const data = await res.json();
     return { available: true, data };
   } catch (err) {
@@ -1027,56 +961,11 @@ async function fetchZeruEnrichment(entityName) {
   }
 }
 
-function buildEnrichmentBlock(zeruResult, entityName) {
-  const SEP = '══════════════════════════════════════════════';
-
-  if (!zeruResult.available) {
-    return `
-
-${SEP}
-② ZERU — Research Intelligence
-   Status: Unavailable (${zeruResult.reason})
-   Note:   VERIS trust report above remains valid.
-${SEP}`;
-  }
-
-  const d = zeruResult.data;
-  const risksText = (d.risks || [])
-    .filter(r => r && r.includes('%'))
-    .slice(0, 5).map(r => `  • ${r}`).join('\n')
-    || (d.risks || []).slice(0, 4).map(r => `  • ${r}`).join('\n')
-    || '  • None identified';
-
-  const summary = (d.summary || 'No summary available')
-    .trim()
-    .substring(0, 400)
-    + ((d.summary || '').length > 400 ? '...' : '');
-
-  return `
-
-${SEP}
-② ZERU — Research Intelligence
-   Source: ZERU Research Agent · ${new Date().toISOString().slice(0,10)}
-${SEP}
-MARKET SUMMARY
-${summary}
-
-KEY RISKS IDENTIFIED
-${risksText}
-
-SENTIMENT: ${(d.sentiment || 'neutral').toUpperCase()}
-${SEP}
-on the CROO network — demonstrating agent-to-agent composability.
-══════════════════════════════════════════════`;
-}
-
 async function fetchSentinelDecision(trustScore, confidence, zeruResult) {
   const sentinelUrl = process.env.SENTINEL_API_URL;
   if (!sentinelUrl) return { available: false, reason: 'SENTINEL_API_URL not configured' };
-
-  const sentiment   = zeruResult?.data?.sentiment   || 'neutral';
-  const riskFactors = zeruResult?.data?.risks        || [];
-
+  const sentiment   = zeruResult?.data?.sentiment || 'neutral';
+  const riskFactors = zeruResult?.data?.risks     || [];
   try {
     const res = await fetch(`${sentinelUrl}/decide`, {
       method:  'POST',
@@ -1092,9 +981,47 @@ async function fetchSentinelDecision(trustScore, confidence, zeruResult) {
   }
 }
 
+function buildEnrichmentBlock(zeruResult, entityName) {
+  const SEP = '══════════════════════════════════════════════';
+  if (!zeruResult.available) {
+    return `
+
+${SEP}
+② ZERU — Research Intelligence
+   Status: Unavailable (${zeruResult.reason})
+   Note:   VERIS trust report above remains valid.
+${SEP}`;
+  }
+  const d = zeruResult.data;
+  const risksText = (d.risks || [])
+    .filter(r => r && r.includes('%'))
+    .slice(0, 5).map(r => `  • ${r}`).join('\n')
+    || (d.risks || []).slice(0, 4).map(r => `  • ${r}`).join('\n')
+    || '  • None identified';
+  const summary = (d.summary || 'No summary available')
+    .trim()
+    .substring(0, 400)
+    + ((d.summary || '').length > 400 ? '...' : '');
+  return `
+
+${SEP}
+② ZERU — Research Intelligence
+   Source: ZERU Research Agent · ${new Date().toISOString().slice(0, 10)}
+${SEP}
+MARKET SUMMARY
+${summary}
+
+KEY RISKS IDENTIFIED
+${risksText}
+
+SENTIMENT: ${(d.sentiment || 'neutral').toUpperCase()}
+${SEP}
+on the CROO network — demonstrating agent-to-agent composability.
+══════════════════════════════════════════════`;
+}
+
 function buildSentinelBlock(sentinelResult) {
   const SEP = '══════════════════════════════════════════════';
-
   if (!sentinelResult.available) {
     return `
 
@@ -1108,7 +1035,6 @@ A2A CONTRIBUTORS
   ③ SENTINEL — Compliance Decision             ✗
 ${SEP}`;
   }
-
   const d = sentinelResult.data;
   const symbol = {
     'PROCEED':              '✅',
@@ -1117,10 +1043,8 @@ ${SEP}`;
     'AVOID':                '⛔',
     'INSUFFICIENT DATA':    '❓',
   }[d.verdict] || '—';
-
   const actions = (d.recommendedActions || [])
     .map(a => `  ✓ ${a}`).join('\n') || '  ✓ See reasoning above';
-
   return `
 
 ${SEP}
@@ -1151,7 +1075,226 @@ ${SEP}`;
 }
 
 // ════════════════════════════════════════════════════════════════════
-// PROVIDER LISTENER  (WebSocket to CROO)
+// CROO ORDER HANDLER
+// ════════════════════════════════════════════════════════════════════
+
+async function handleOrder(provider, orderId) {
+  try {
+    const order = await provider.getOrder(orderId);
+    console.log('📋 Order received:', orderId);
+
+    const rawRequirement =
+      order.requirement     ||
+      order.requirements    ||
+      order.requirementText ||
+      order.input           ||
+      order.data            ||
+      '';
+
+    let requirements = {};
+    if (rawRequirement) {
+      let parsed = parseBody(rawRequirement);
+
+      let unwrapDepth = 0;
+      while (parsed && typeof parsed === 'object' && unwrapDepth < 5) {
+        if (parsed.type) break;
+        if (parsed.entityType && parsed.entityId) break;
+        if (Array.isArray(parsed.agents)) break;
+
+        if (typeof parsed.text === 'string') {
+          const inner = parseBody(parsed.text);
+          if (inner && typeof inner === 'object') { parsed = inner; unwrapDepth++; continue; }
+        }
+
+        if (parsed.requirements && typeof parsed.requirements === 'object') {
+          parsed = parsed.requirements; unwrapDepth++; continue;
+        }
+
+        if (typeof parsed.requirements === 'string') {
+          const inner = parseBody(parsed.requirements);
+          if (inner && typeof inner === 'object') { parsed = inner; unwrapDepth++; continue; }
+        }
+
+        break;
+      }
+
+      if (unwrapDepth > 0) {
+        console.log(`  📦 Unwrapped ${unwrapDepth} layer(s) of CROO wrapping`);
+      }
+
+      // FIX: assignment block now handles all three valid shapes
+      if (parsed && typeof parsed === 'object' && parsed.type) {
+        requirements = parsed;
+      } else if (parsed && typeof parsed === 'object' && parsed.entityType && parsed.entityId) {
+        requirements = parsed;  // trust receipt requests
+      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.agents)) {
+        requirements = parsed;  // trust compare requests
+      } else if (parsed && typeof parsed === 'object' && parsed.name) {
+        requirements = { type: 'project', ...parsed };
+      } else {
+        // Detect input type to set sensible defaults
+        const inputType = detectInputType(String(rawRequirement).trim());
+        if (inputType.type === 'uuid') {
+          requirements = { type: 'agent', agentId: String(rawRequirement).trim() };
+        } else {
+          requirements = { type: 'project', name: String(rawRequirement).trim() };
+        }
+      }
+    }
+
+    if (!requirements.type) requirements.type = 'project';
+    if (requirements.type === 'project' && !requirements.name) {
+      requirements.name = String(rawRequirement || 'Unknown').trim();
+    }
+
+    console.log('📋 Parsed requirements:', JSON.stringify(requirements));
+
+    // Detect input type for logging and report clarity
+    const inputIdentifier = requirements.name || requirements.agentId || requirements.entityId || '';
+    const inputType = detectInputType(inputIdentifier);
+    console.log(`  🔍 Input detected as: ${inputType.label}`);
+
+    let report = '';
+
+    // ── Route by service type ──────────────────────────────────────
+
+    if (Array.isArray(requirements.agents) && requirements.agents.length >= 2) {
+      console.log(`  📊 Trust Compare: ${requirements.agents.length} agents`);
+      report = await handleCompare(requirements.agents, REQUESTER_SDK_KEY);
+
+    } else if (requirements.entityId && requirements.entityType) {
+      // ── TRUST RECEIPT HISTORY ────────────────────────────────────
+      console.log(`  🗄️ Trust Receipt History: ${requirements.entityType} / ${requirements.entityId}`);
+
+      // FIX: normalize entityId before querying — prevents case-mismatch misses
+      const receipts = await getTrustReceipts(requirements.entityId.toLowerCase().trim());
+
+      if (!receipts || receipts.length === 0) {
+        report = `VERIS TRUST RECEIPT HISTORY
+══════════════════════════════════════════════
+Entity:     ${requirements.entityId}
+Type:       ${requirements.entityType}
+Queried:    ${new Date().toISOString()}
+══════════════════════════════════════════════
+This entity has not yet been audited by VERIS.
+
+Run a trust audit first to generate the first receipt.
+Once audited, VERIS will track score changes over time —
+showing whether trust is improving, declining, or stable.
+
+HOW TO GET STARTED
+  1. Place a VERIS trust audit order for this entity.
+  2. Wait for the audit report to be delivered.
+  3. Place this Trust Receipt History order again
+     to see the score trend.
+══════════════════════════════════════════════
+Auditor: VERIS · CROO v1 · Base Mainnet`;
+      } else {
+        const latest = receipts[0];
+        const oldest = receipts[receipts.length - 1];
+        const diff   = receipts.length > 1 ? (latest.score ?? 0) - (oldest.score ?? 0) : 0;
+        const trend  = receipts.length > 1
+          ? diff > 0  ? `↑ Improving (+${diff} points since first audit)`
+          : diff < 0  ? `↓ Declining (${diff} points since first audit)`
+          : '→ Stable (no change since first audit)'
+          : 'Only one audit on record — run again later to see trend';
+
+        const scoreHistory = receipts
+          .map((r, i) =>
+            `  ${i + 1}. ${new Date(r.created_at).toLocaleDateString('en-GB')} — ` +
+            `Score: ${r.score ?? 'N/A'}/100  ` +
+            `Risk: ${r.risk_level || 'Unknown'}  ` +
+            `Signals: ${r.signals_verified || 0}/${r.signals_total || 0}`
+          )
+          .join('\n');
+
+        report = `VERIS TRUST RECEIPT HISTORY
+══════════════════════════════════════════════
+Entity:     ${latest.entity_name || requirements.entityId}
+Type:       ${requirements.entityType}
+Audits:     ${receipts.length} on record
+Queried:    ${new Date().toISOString()}
+══════════════════════════════════════════════
+LATEST SCORE
+  Score:      ${latest.score ?? 'N/A'}/100
+  Risk Level: ${latest.risk_level || 'Unknown'}
+  Signals:    ${latest.signals_verified || 0}/${latest.signals_total || 0} verified
+  Date:       ${new Date(latest.created_at).toLocaleString('en-GB')}
+══════════════════════════════════════════════
+SCORE TREND
+  ${trend}
+  Earliest:   ${oldest.score ?? 'N/A'}/100  (${new Date(oldest.created_at).toLocaleDateString('en-GB')})
+  Latest:     ${latest.score ?? 'N/A'}/100  (${new Date(latest.created_at).toLocaleDateString('en-GB')})
+${receipts.length > 1 ? `  Change:     ${diff > 0 ? '+' : ''}${diff} points across ${receipts.length} audits\n` : ''}══════════════════════════════════════════════
+AUDIT HISTORY  (newest first)
+${scoreHistory}
+══════════════════════════════════════════════
+WHAT THIS MEANS
+  ${diff > 5  ? 'Trust signals have strengthened over time. Positive trajectory.' :
+    diff < -5 ? 'Trust signals have weakened. Review latest report for details.' :
+    receipts.length > 1 ? 'Trust score has remained consistent across audits.' :
+    'First audit complete. Re-audit later to establish a trend.'}
+
+  Re-audit recommended: ${
+    diff < -5 ? 'As soon as possible — declining signals detected.' :
+    latest.score && latest.score < 50 ? 'Soon — score is in the High Risk range.' :
+    '30 days to track continued trend.'
+  }
+══════════════════════════════════════════════
+Auditor: VERIS · CROO v1 · Base Mainnet`;
+      }
+
+    } else {
+      // ── STANDARD TRUST AUDIT ──────────────────────────────────────
+      if (!requirements.type) requirements.type = 'project';
+      if (requirements.type === 'project' && !requirements.name) {
+        requirements.name = String(rawRequirement || 'Unknown').trim();
+      }
+
+      report = await runVERIS(requirements, REQUESTER_SDK_KEY);
+
+      // Append insufficient data explanation if needed
+      if (report.includes('N/A (Insufficient Evidence)') || report.includes('INSUFFICIENT DATA')) {
+        report += buildInsufficientDataBlock(
+          requirements.name || requirements.agentId || 'Unknown',
+          inputType,
+          requirements.type
+        );
+      } else {
+        // Append richer reasoning
+        report += buildReasoningBlock(report);
+      }
+
+      // A2A enrichment — ZERU + SENTINEL (project audits only)
+      if (requirements.type === 'project' && requirements.name) {
+        console.log(`  🔗 A2A: calling ZERU for ${requirements.name}...`);
+        const zeruResult = await fetchZeruEnrichment(requirements.name);
+        console.log(`  🔗 ZERU: ${zeruResult.available ? 'responded' : zeruResult.reason}`);
+        report += buildEnrichmentBlock(zeruResult, requirements.name);
+
+        console.log(`  🔗 A2A: calling SENTINEL...`);
+        const scoreMatch    = report.match(/LEGITIMACY:\s+(\d+)\/100/i);
+        const confMatch     = report.match(/CONFIDENCE:.*?(\d+)%/);
+        const trustScore    = scoreMatch ? parseInt(scoreMatch[1]) : null;
+        const confidence    = confMatch  ? parseInt(confMatch[1])  : 50;
+        const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult);
+        console.log(`  🔗 SENTINEL: ${sentinelResult.available ? sentinelResult.data?.verdict : sentinelResult.reason}`);
+        report += buildSentinelBlock(sentinelResult);
+      }
+    }
+
+    const delivery = await provider.deliverOrder(orderId, {
+      deliverableType: DeliverableType.Text,
+      deliverableText: report,
+    });
+    console.log('📦 Delivered:', delivery.txHash);
+  } catch (err) {
+    console.error('Order handling error:', err.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PROVIDER LISTENER
 // ════════════════════════════════════════════════════════════════════
 
 const activeConnections = new Set();
@@ -1161,14 +1304,12 @@ async function startProvider(sdkKey, label) {
   if (!sdkKey)                       { console.log(`No SDK key for ${label} — skipping`); return; }
   if (activeConnections.has(sdkKey)) { console.log(`${label} already connected — skipping`); return; }
   activeConnections.add(sdkKey);
-
   try {
     console.log(`Starting ${label} provider...`);
     const provider = new AgentClient(config, sdkKey);
     const stream   = await provider.connectWebSocket();
     reconnectAttempts = 0;
     console.log(`✅ ${label} WebSocket connected`);
-
     stream.on(EventType.NegotiationCreated, async (e) => {
       console.log(`📨 ${label} negotiation:`, e.negotiation_id);
       try {
@@ -1176,16 +1317,13 @@ async function startProvider(sdkKey, label) {
         console.log('✅ Accepted, order:', result.order.orderId);
       } catch (err) { console.error('Accept error:', err.message); }
     });
-
     stream.on(EventType.OrderPaid, async (e) => {
       console.log(`💰 ${label} payment received:`, e.order_id);
       await handleOrder(provider, e.order_id);
     });
-
     stream.on(EventType.OrderCompleted, (e) => {
       console.log(`🎉 ${label} order settled:`, e.order_id);
     });
-
     stream.on('close', () => {
       activeConnections.delete(sdkKey);
       reconnectAttempts++;
@@ -1193,7 +1331,6 @@ async function startProvider(sdkKey, label) {
       console.log(`${label} closed — reconnecting in ${delay / 1000}s`);
       setTimeout(() => startProvider(sdkKey, label), delay);
     });
-
     stream.on('error', (err) => console.error(`${label} WS error:`, err.message));
   } catch (err) {
     activeConnections.delete(sdkKey);
@@ -1205,7 +1342,7 @@ async function startProvider(sdkKey, label) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// KEEP-ALIVE  (prevents Railway/Render sleeping)
+// KEEP-ALIVE
 // ════════════════════════════════════════════════════════════════════
 
 setInterval(async () => {
