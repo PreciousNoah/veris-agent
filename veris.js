@@ -45,7 +45,7 @@ export async function getTrustReceipts(entityId, limit = 10) {
     const { data, error } = await supabase
       .from('trust_receipts')
       .select('id, entity_type, entity_name, score, risk_level, signals_verified, signals_total, created_at')
-      .eq('entity_id', entityId)
+      .eq('entity_id', entityId.toLowerCase().trim())
       .order('created_at', { ascending: false })
       .limit(limit);
     if (error) throw error;
@@ -1429,7 +1429,7 @@ export async function runProjectDueDiligence(project) {
   // signals come from the static ground_truth.js dataset, not live search.
   const searchInfraFailed = totalSources === 0 && !ENTITY_GROUND_TRUTH[project.name];
   if (searchInfraFailed) {
-    console.warn(`  \ud83d\uded1 SEARCH INFRASTRUCTURE FAILURE: 0 sources returned across ${Object.keys(queries).length} queries \u2014 likely Tavily quota/outage, not an entity trust issue`);
+    console.warn(`  🛑 SEARCH INFRASTRUCTURE FAILURE: 0 sources returned across ${Object.keys(queries).length} queries — likely Tavily quota/outage, not an entity trust issue`);
   }
   const combinedText = searchResults.filter(r => r.text).map(r => `=== ${r.key.toUpperCase()} ===\n${r.text}`).join('\n\n');
   console.log('  → Extracting evidence...');
@@ -2473,4 +2473,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
   }
 
   throw new Error('Invalid type. Use "project" or "agent".');
-}
+                       } 
