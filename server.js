@@ -1097,9 +1097,10 @@ async function handleOrder(provider, orderId) {
 
       let unwrapDepth = 0;
       while (parsed && typeof parsed === 'object' && unwrapDepth < 5) {
-        if (parsed.type) break;
+        if (parsed.type && !Array.isArray(parsed.entities)) break; // ← CHANGED
         if (parsed.entityType && parsed.entityId) break;
         if (Array.isArray(parsed.agents)) break;
+        if (Array.isArray(parsed.entities) && parsed.entities.length >= 2) break; // ← ADDED
 
         if (typeof parsed.text === 'string') {
           const inner = parseBody(parsed.text);
