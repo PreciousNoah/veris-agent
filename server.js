@@ -1097,10 +1097,10 @@ async function handleOrder(provider, orderId) {
 
       let unwrapDepth = 0;
       while (parsed && typeof parsed === 'object' && unwrapDepth < 5) {
-        if (parsed.type && !Array.isArray(parsed.entities)) break; // ← CHANGED
+        if (parsed.type && !Array.isArray(parsed.entities)) break;
         if (parsed.entityType && parsed.entityId) break;
         if (Array.isArray(parsed.agents)) break;
-        if (Array.isArray(parsed.entities) && parsed.entities.length >= 2) break; // ← ADDED
+        if (Array.isArray(parsed.entities) && parsed.entities.length >= 2) break;
 
         if (typeof parsed.text === 'string') {
           const inner = parseBody(parsed.text);
@@ -1123,17 +1123,17 @@ async function handleOrder(provider, orderId) {
         console.log(`  📦 Unwrapped ${unwrapDepth} layer(s) of CROO wrapping`);
       }
 
-      // FIX: assignment block now handles all three valid shapes
       if (parsed && typeof parsed === 'object' && parsed.type) {
         requirements = parsed;
       } else if (parsed && typeof parsed === 'object' && parsed.entityType && parsed.entityId) {
-        requirements = parsed;  // trust receipt requests
+        requirements = parsed;
       } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.agents)) {
-        requirements = parsed;  // trust compare requests
+        requirements = parsed;
+      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.entities)) {
+        requirements = parsed;
       } else if (parsed && typeof parsed === 'object' && parsed.name) {
         requirements = { type: 'project', ...parsed };
       } else {
-        // Detect input type to set sensible defaults
         const inputType = detectInputType(String(rawRequirement).trim());
         if (inputType.type === 'uuid') {
           requirements = { type: 'agent', agentId: String(rawRequirement).trim() };
@@ -1150,7 +1150,6 @@ async function handleOrder(provider, orderId) {
 
     console.log('📋 Parsed requirements:', JSON.stringify(requirements));
 
-    // Detect input type for logging and report clarity
     const inputIdentifier = requirements.name || requirements.agentId || requirements.entityId || '';
     const inputType = detectInputType(inputIdentifier);
     console.log(`  🔍 Input detected as: ${inputType.label}`);
@@ -1164,10 +1163,7 @@ async function handleOrder(provider, orderId) {
       report = await handleCompare(requirements.agents, REQUESTER_SDK_KEY);
 
     } else if (requirements.entityId && requirements.entityType) {
-      // ── TRUST RECEIPT HISTORY ────────────────────────────────────
       console.log(`  🗄️ Trust Receipt History: ${requirements.entityType} / ${requirements.entityId}`);
-
-      // FIX: normalize entityId before querying — prevents case-mismatch misses
       const receipts = await getTrustReceipts(requirements.entityId.toLowerCase().trim());
 
       if (!receipts || receipts.length === 0) {
@@ -1245,6 +1241,53 @@ WHAT THIS MEANS
 Auditor: VERIS · CROO v1 · Base Mainnet`;
       }
 
+    } else if (
+      (Array.isArray(requirements.agents) && requirements.agents.length >= 2) ||
+      (Array.isArray(requirements.entities) && requirements.entities.length >= 2)
+    ) {
+      // ── TRUST COMPARE (minimal implementation via receipt lookup) ─
+      const entities = requirements.entities || requirements.agents;
+      const names = entities.map(e => (e.name || e.agentName || e.agentId || '').toLowerCase().trim()).filter(Boolean);
+
+      console.log(`  📊 Trust Compare: ${names.join(' vs ')}`);
+
+      const results = await Promise.all(names.map(async (name) => {
+        const receipts = await getTrustReceipts(name, 2);
+        if (!receipts || receipts.length === 0) {
+          return { name, current: null, previous: null };
+        }
+        return {
+          name,
+          current:  receipts[0] || null,
+          previous: receipts[1] || null,
+        };
+      }));
+
+      const lines = results.map(r => {
+        if (!r.current) return `${r.name.toUpperCase()}\n  No previous analysis available.`;
+        const diff = r.previous ? (r.current.score ?? 0) - (r.previous.score ?? 0) : null;
+        return `${r.current.entity_name || r.name.toUpperCase()}
+  Current score:  ${r.current.score ?? 'N/A'}/100
+  Previous score: ${r.previous ? (r.previous.score ?? 'N/A') + '/100' : 'No prior audit'}
+  Change:         ${diff !== null ? (diff > 0 ? '+' : '') + diff + ' points' : 'N/A'}
+  Risk:           ${r.previous ? r.previous.risk_level + ' → ' : ''}${r.current.risk_level || 'Unknown'}`;
+      });
+
+      const best = [...results]
+        .filter(r => r.current?.score != null)
+        .sort((a, b) => (b.current.score ?? 0) - (a.current.score ?? 0))[0];
+
+      report = `VERIS TRUST COMPARE
+══════════════════════════════════════════════
+Compared: ${names.join(', ')}
+Queried:  ${new Date().toISOString()}
+══════════════════════════════════════════════
+${lines.join('\n══════════════════════════════════════════════\n')}
+══════════════════════════════════════════════
+${best ? `STRONGEST SIGNAL: ${best.current.entity_name || best.name} (${best.current.score}/100)` : 'INSUFFICIENT DATA: Run individual audits first.'}
+══════════════════════════════════════════════
+Auditor: VERIS · CROO v1 · Base Mainnet`;
+
     } else {
       // ── STANDARD TRUST AUDIT ──────────────────────────────────────
       if (!requirements.type) requirements.type = 'project';
@@ -1254,7 +1297,6 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
 
       report = await runVERIS(requirements, REQUESTER_SDK_KEY);
 
-      // Append insufficient data explanation if needed
       if (report.includes('N/A (Insufficient Evidence)') || report.includes('INSUFFICIENT DATA')) {
         report += buildInsufficientDataBlock(
           requirements.name || requirements.agentId || 'Unknown',
@@ -1262,11 +1304,9 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
           requirements.type
         );
       } else {
-        // Append richer reasoning
         report += buildReasoningBlock(report);
       }
 
-      // A2A enrichment — ZERU + SENTINEL (project audits only)
       if (requirements.type === 'project' && requirements.name) {
         console.log(`  🔗 A2A: calling ZERU for ${requirements.name}...`);
         const zeruResult = await fetchZeruEnrichment(requirements.name);
