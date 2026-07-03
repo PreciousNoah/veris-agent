@@ -465,7 +465,8 @@ app.post('/audit', async (req, res) => {
       const confMatch  = report.match(/CONFIDENCE:.*?(\d+)%/);
       const trustScore = scoreMatch ? parseInt(scoreMatch[1]) : null;
       const confidence = confMatch  ? parseInt(confMatch[1])  : 50;
-      const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult);
+      const incidents = parseIncidentsFromReport(report);
+      const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult, incidents);
       report += buildSentinelBlock(sentinelResult);
     }
 
@@ -961,16 +962,35 @@ async function fetchZeruEnrichment(entityName) {
   }
 }
 
-async function fetchSentinelDecision(trustScore, confidence, zeruResult) {
+async function fetchSentinelDecision(trustScore, confidence, zeruResult, incidents = []) {
   const sentinelUrl = process.env.SENTINEL_API_URL;
   if (!sentinelUrl) return { available: false, reason: 'SENTINEL_API_URL not configured' };
   const sentiment   = zeruResult?.data?.sentiment || 'neutral';
   const riskFactors = zeruResult?.data?.risks     || [];
+
+  // Serialize incidents to plain strings — prevents [object Object] in SENTINEL output
+  const serializedIncidents = (incidents || []).map(i => {
+    if (typeof i === 'string') return i;
+    if (i && typeof i === 'object') {
+      return i.label || i.text || i.description || i.message || JSON.stringify(i);
+    }
+    return String(i);
+  });
+
+  // Serialize risk factors to strings too
+  const serializedRisks = (riskFactors || []).map(r => {
+    if (typeof r === 'string') return r;
+    if (r && typeof r === 'object') {
+      return r.label || r.description || r.text || JSON.stringify(r);
+    }
+    return String(r);
+  });
+
   try {
     const res = await fetch(`${sentinelUrl}/decide`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ trustScore, confidence, sentiment, riskFactors, incidents: [] }),
+      body:    JSON.stringify({ trustScore, confidence, sentiment, riskFactors: serializedRisks, incidents: serializedIncidents }),
       signal:  AbortSignal.timeout(15000),
     });
     if (!res.ok) return { available: false, reason: `SENTINEL returned ${res.status}` };
@@ -987,7 +1007,7 @@ function buildEnrichmentBlock(zeruResult, entityName) {
     return `
 
 ${SEP}
-② ZERU — Research Intelligence
+[2] ZERU — Research Intelligence
    Status: Unavailable (${zeruResult.reason})
    Note:   VERIS trust report above remains valid.
 ${SEP}`;
@@ -1005,8 +1025,8 @@ ${SEP}`;
   return `
 
 ${SEP}
-② ZERU — Research Intelligence
-   Source: ZERU Research Agent · ${new Date().toISOString().slice(0, 10)}
+[2] ZERU — Research Intelligence
+    Source: ZERU Research Agent · ${new Date().toISOString().slice(0, 10)}
 ${SEP}
 MARKET SUMMARY
 ${summary}
@@ -1016,23 +1036,22 @@ ${risksText}
 
 SENTIMENT: ${(d.sentiment || 'neutral').toUpperCase()}
 ${SEP}
-on the CROO network — demonstrating agent-to-agent composability.
-══════════════════════════════════════════════`;
+on the CROO network — demonstrating agent-to-agent composability.`;
 }
 
-function buildSentinelBlock(sentinelResult) {
+function buildSentinelBlock(sentinelResult, trustScore = null) {
   const SEP = '══════════════════════════════════════════════';
   if (!sentinelResult.available) {
     return `
 
 ${SEP}
-③ SENTINEL — Compliance Decision
-   Status: Unavailable (${sentinelResult.reason})
+[3] SENTINEL — Compliance Decision
+    Status: Unavailable (${sentinelResult.reason})
 ${SEP}
 A2A CONTRIBUTORS
-  ① VERIS    — Trust Verification & Scoring    ✓
-  ② ZERU     — Research & Intelligence         ✓
-  ③ SENTINEL — Compliance Decision             ✗
+  [1] VERIS    — Trust Verification & Scoring    OK
+  [2] ZERU     — Research & Intelligence         OK
+  [3] SENTINEL — Compliance Decision             UNAVAILABLE
 ${SEP}`;
   }
   const d = sentinelResult.data;
@@ -1048,12 +1067,12 @@ ${SEP}`;
   return `
 
 ${SEP}
-③ SENTINEL — Compliance Decision
-   Source: SENTINEL Decision Intelligence Agent
+[3] SENTINEL — Compliance Decision
+    Source: SENTINEL Decision Intelligence Agent
 ${SEP}
 VERDICT:  ${symbol}  ${d.verdict}
 
-  Trust Score:       ${d.inputs?.trustScore ?? 'N/A'}/100
+  Trust Score:       ${d.inputs?.trustScore ?? trustScore ?? 'N/A'}/100
   Compliance Score:  ${d.complianceScore ?? 'N/A'}/100
   Risk Class:        ${d.riskClass}
   Confidence:        ${d.confidence}
@@ -1066,9 +1085,9 @@ RECOMMENDED ACTIONS
 ${actions}
 ${SEP}
 A2A CONTRIBUTORS
-  ① VERIS    — Trust Verification & Scoring
-  ② ZERU     — Research & Intelligence
-  ③ SENTINEL — Compliance Decision ◄ (this step)
+  [1] VERIS    — Trust Verification & Scoring
+  [2] ZERU     — Research & Intelligence
+  [3] SENTINEL — Compliance Decision  <-- (this step)
 
   Three autonomous agents cooperating on CROO · Base Mainnet
 ${SEP}`;
@@ -1097,10 +1116,9 @@ async function handleOrder(provider, orderId) {
 
       let unwrapDepth = 0;
       while (parsed && typeof parsed === 'object' && unwrapDepth < 5) {
-        if (parsed.type && !Array.isArray(parsed.entities)) break;
+        if (parsed.type) break;
         if (parsed.entityType && parsed.entityId) break;
         if (Array.isArray(parsed.agents)) break;
-        if (Array.isArray(parsed.entities) && parsed.entities.length >= 2) break;
 
         if (typeof parsed.text === 'string') {
           const inner = parseBody(parsed.text);
@@ -1123,17 +1141,38 @@ async function handleOrder(provider, orderId) {
         console.log(`  📦 Unwrapped ${unwrapDepth} layer(s) of CROO wrapping`);
       }
 
-      if (parsed && typeof parsed === 'object' && parsed.type) {
+      // FIX: assignment block handles all valid shapes including entities[] compare format
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.agents)) {
+        // Standard compare: { agents: [...] }
         requirements = parsed;
+
+      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.entities) && parsed.entities.length >= 2) {
+        // Alternative compare format buyers use:
+        // { type: "project", entities: [{ name: "Aave", website: "..." }, { name: "Uniswap" }] }
+        // Normalise into the agents[] shape handleCompare expects
+        requirements = {
+          agents: parsed.entities.map(e => ({
+            agentId:            e.name || e.agentId || e.id || 'unknown',
+            agentName:          e.name || e.agentName || e.agentId || 'Unknown',
+            endpointUrl:        e.endpointUrl || null,
+            serviceDescription: e.serviceDescription || e.description || null,
+            category:           e.category || parsed.category || 'general',
+            website:            e.website || null,
+          })),
+        };
+        console.log(`  📊 Normalised entities[] compare: ${requirements.agents.map(a => a.agentName).join(' vs ')}`);
+
       } else if (parsed && typeof parsed === 'object' && parsed.entityType && parsed.entityId) {
+        requirements = parsed;  // trust receipt requests
+
+      } else if (parsed && typeof parsed === 'object' && parsed.type) {
         requirements = parsed;
-      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.agents)) {
-        requirements = parsed;
-      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.entities)) {
-        requirements = parsed;
+
       } else if (parsed && typeof parsed === 'object' && parsed.name) {
         requirements = { type: 'project', ...parsed };
+
       } else {
+        // Detect input type to set sensible defaults
         const inputType = detectInputType(String(rawRequirement).trim());
         if (inputType.type === 'uuid') {
           requirements = { type: 'agent', agentId: String(rawRequirement).trim() };
@@ -1150,6 +1189,7 @@ async function handleOrder(provider, orderId) {
 
     console.log('📋 Parsed requirements:', JSON.stringify(requirements));
 
+    // Detect input type for logging and report clarity
     const inputIdentifier = requirements.name || requirements.agentId || requirements.entityId || '';
     const inputType = detectInputType(inputIdentifier);
     console.log(`  🔍 Input detected as: ${inputType.label}`);
@@ -1159,11 +1199,78 @@ async function handleOrder(provider, orderId) {
     // ── Route by service type ──────────────────────────────────────
 
     if (Array.isArray(requirements.agents) && requirements.agents.length >= 2) {
-      console.log(`  📊 Trust Compare: ${requirements.agents.length} agents`);
-      report = await handleCompare(requirements.agents, REQUESTER_SDK_KEY);
+      // Detect if this is a project compare or agent compare based on the entity shape
+      // Project compare: entities have website/URL or are known project names without UUIDs
+      // Agent compare: entities have UUID agentIds
+      const isProjectCompare = requirements.agents.every(a => {
+        const id = a.agentId || '';
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        return !isUUID && (a.website || !id.includes('-'));
+      });
+
+      if (isProjectCompare) {
+        // Run as parallel project audits and format a comparison report
+        console.log(`  📊 Project Compare: ${requirements.agents.map(a => a.agentName).join(' vs ')}`);
+        const projectResults = await Promise.all(requirements.agents.map(async (agent) => {
+          try {
+            const projectReport = await runVERIS({
+              type:    'project',
+              name:    agent.agentName || agent.agentId,
+              website: agent.website || null,
+            }, REQUESTER_SDK_KEY);
+            const score = parseScoreFromReport(projectReport);
+            const rec   = parseRecommendationFromReport(projectReport);
+            const sigs  = parseSignalsFromReport(projectReport);
+            return { name: agent.agentName, score, rec, sigs, error: null };
+          } catch (err) {
+            return { name: agent.agentName, score: null, rec: 'Error', sigs: { verified: 0, total: 0 }, error: err.message };
+          }
+        }));
+
+        const ranked = [...projectResults].filter(r => r.score !== null).sort((a, b) => (b.score || 0) - (a.score || 0));
+        const best   = ranked[0];
+        const SEP    = '══════════════════════════════════════════════';
+        const rows   = ranked.map((r, i) =>
+          `  ${i + 1}. ${r.name.padEnd(20)} ${String(r.score + '/100').padStart(7)}  ${r.rec}  (${r.sigs.verified}/${r.sigs.total} signals)`
+        ).join('
+');
+
+        const verdict = best
+          ? best.score >= 65
+            ? `${best.name} has the strongest trust signals (${best.score}/100).`
+            : `All compared projects have limited signals. Strongest: ${best.name} (${best.score}/100). Proceed with caution.`
+          : 'Insufficient data across all compared projects.';
+
+        report = `VERIS PROJECT TRUST COMPARE
+${SEP}
+Compared:  ${projectResults.map(r => r.name).join(', ')}
+Audited:   ${new Date().toUTCString()}
+Audited by: VERIS — Trust Infrastructure for the Agent Economy
+${SEP}
+RANKING
+
+${rows}
+
+${SEP}
+RECOMMENDATION
+  ${verdict}
+${SEP}
+AUDIT TRAIL
+  Auditor: VERIS · CROO v1 · Base Mainnet
+  Projects compared: ${projectResults.length}
+  Timestamp: ${new Date().toISOString()}
+${SEP}`;
+
+      } else {
+        console.log(`  📊 Agent Trust Compare: ${requirements.agents.length} agents`);
+        report = await handleCompare(requirements.agents, REQUESTER_SDK_KEY);
+      }
 
     } else if (requirements.entityId && requirements.entityType) {
+      // ── TRUST RECEIPT HISTORY ────────────────────────────────────
       console.log(`  🗄️ Trust Receipt History: ${requirements.entityType} / ${requirements.entityId}`);
+
+      // FIX: normalize entityId before querying — prevents case-mismatch misses
       const receipts = await getTrustReceipts(requirements.entityId.toLowerCase().trim());
 
       if (!receipts || receipts.length === 0) {
@@ -1241,53 +1348,6 @@ WHAT THIS MEANS
 Auditor: VERIS · CROO v1 · Base Mainnet`;
       }
 
-    } else if (
-      (Array.isArray(requirements.agents) && requirements.agents.length >= 2) ||
-      (Array.isArray(requirements.entities) && requirements.entities.length >= 2)
-    ) {
-      // ── TRUST COMPARE (minimal implementation via receipt lookup) ─
-      const entities = requirements.entities || requirements.agents;
-      const names = entities.map(e => (e.name || e.agentName || e.agentId || '').toLowerCase().trim()).filter(Boolean);
-
-      console.log(`  📊 Trust Compare: ${names.join(' vs ')}`);
-
-      const results = await Promise.all(names.map(async (name) => {
-        const receipts = await getTrustReceipts(name, 2);
-        if (!receipts || receipts.length === 0) {
-          return { name, current: null, previous: null };
-        }
-        return {
-          name,
-          current:  receipts[0] || null,
-          previous: receipts[1] || null,
-        };
-      }));
-
-      const lines = results.map(r => {
-        if (!r.current) return `${r.name.toUpperCase()}\n  No previous analysis available.`;
-        const diff = r.previous ? (r.current.score ?? 0) - (r.previous.score ?? 0) : null;
-        return `${r.current.entity_name || r.name.toUpperCase()}
-  Current score:  ${r.current.score ?? 'N/A'}/100
-  Previous score: ${r.previous ? (r.previous.score ?? 'N/A') + '/100' : 'No prior audit'}
-  Change:         ${diff !== null ? (diff > 0 ? '+' : '') + diff + ' points' : 'N/A'}
-  Risk:           ${r.previous ? r.previous.risk_level + ' → ' : ''}${r.current.risk_level || 'Unknown'}`;
-      });
-
-      const best = [...results]
-        .filter(r => r.current?.score != null)
-        .sort((a, b) => (b.current.score ?? 0) - (a.current.score ?? 0))[0];
-
-      report = `VERIS TRUST COMPARE
-══════════════════════════════════════════════
-Compared: ${names.join(', ')}
-Queried:  ${new Date().toISOString()}
-══════════════════════════════════════════════
-${lines.join('\n══════════════════════════════════════════════\n')}
-══════════════════════════════════════════════
-${best ? `STRONGEST SIGNAL: ${best.current.entity_name || best.name} (${best.current.score}/100)` : 'INSUFFICIENT DATA: Run individual audits first.'}
-══════════════════════════════════════════════
-Auditor: VERIS · CROO v1 · Base Mainnet`;
-
     } else {
       // ── STANDARD TRUST AUDIT ──────────────────────────────────────
       if (!requirements.type) requirements.type = 'project';
@@ -1297,6 +1357,7 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
 
       report = await runVERIS(requirements, REQUESTER_SDK_KEY);
 
+      // Append insufficient data explanation if needed
       if (report.includes('N/A (Insufficient Evidence)') || report.includes('INSUFFICIENT DATA')) {
         report += buildInsufficientDataBlock(
           requirements.name || requirements.agentId || 'Unknown',
@@ -1304,9 +1365,11 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
           requirements.type
         );
       } else {
+        // Append richer reasoning
         report += buildReasoningBlock(report);
       }
 
+      // A2A enrichment — ZERU + SENTINEL (project audits only)
       if (requirements.type === 'project' && requirements.name) {
         console.log(`  🔗 A2A: calling ZERU for ${requirements.name}...`);
         const zeruResult = await fetchZeruEnrichment(requirements.name);
@@ -1318,7 +1381,8 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
         const confMatch     = report.match(/CONFIDENCE:.*?(\d+)%/);
         const trustScore    = scoreMatch ? parseInt(scoreMatch[1]) : null;
         const confidence    = confMatch  ? parseInt(confMatch[1])  : 50;
-        const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult);
+        const incidents = parseIncidentsFromReport(report);
+        const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult, incidents);
         console.log(`  🔗 SENTINEL: ${sentinelResult.available ? sentinelResult.data?.verdict : sentinelResult.reason}`);
         report += buildSentinelBlock(sentinelResult);
       }
