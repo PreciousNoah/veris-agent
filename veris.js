@@ -1342,7 +1342,7 @@ function buildSearchQueries(project, entityType) {
 
 async function groqExtract(prompt) {
   const c = await groq.chat.completions.create({
-    model:'llama-3.3-70b-versatile',
+    model: 'qwen-qwq-32b',
     messages:[
       { role:'system', content:'You are a structured data extraction engine. Return ONLY valid JSON. No markdown, no backticks, no explanation.' },
       { role:'user', content:prompt },
@@ -1354,7 +1354,7 @@ async function groqExtract(prompt) {
 
 async function groqSynthesize(prompt, systemMsg='You are a factual research assistant. Be specific and concise.') {
   const c = await groq.chat.completions.create({
-    model:'llama-3.3-70b-versatile',
+    model: 'qwen-qwq-32b',
     messages:[{ role:'system', content:systemMsg },{ role:'user', content:prompt }],
     max_tokens:600, temperature:0.2,
   });
@@ -1638,7 +1638,7 @@ ${verdictText}
 SCORE BANDS
   90-100  Strongly Trusted    80-89  Trusted
   65-79   Generally Legitimate  50-64  Mixed Signals
-  30-49   High Risk            0-29   Critical Risk
+  30-49   High Risk            0-29  Critical Risk
   N/A     Insufficient Data
 METHODOLOGY
   Entity:       ${template.label} (Weights: Identity×${template.bucketWeights.identity} · Transparency×${template.bucketWeights.transparency} · Verification×${template.bucketWeights.verification} · Reputation×${template.bucketWeights.reputation})
@@ -1651,7 +1651,7 @@ METHODOLOGY
   Ground Truth: Signal resolver applies known facts for established entities
 AUDIT TRAIL
   Search:      Tavily Advanced (${totalSources} sources)
-  Extraction:  Groq llama-3.3-70b-versatile (temperature 0.0)
+  Extraction:  Groq qwen-qwq-32b (temperature 0.0)
   Resolver:    Signal resolver + confidence gate + source validation
   Scoring:     Deterministic code + reasonableness check
   Auditor:     VERIS · CROO v1 · Base Mainnet
@@ -2474,4 +2474,3 @@ export async function runVERIS(requirements, requesterSdkKey) {
 
   throw new Error('Invalid type. Use "project" or "agent".');
 }
- 
