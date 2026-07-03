@@ -1342,7 +1342,7 @@ function buildSearchQueries(project, entityType) {
 
 async function groqExtract(prompt) {
   const c = await groq.chat.completions.create({
-    model: 'qwen-qwq-32b',
+    model: 'openai/gpt-oss-20b',
     messages:[
       { role:'system', content:'You are a structured data extraction engine. Return ONLY valid JSON. No markdown, no backticks, no explanation.' },
       { role:'user', content:prompt },
@@ -1354,7 +1354,7 @@ async function groqExtract(prompt) {
 
 async function groqSynthesize(prompt, systemMsg='You are a factual research assistant. Be specific and concise.') {
   const c = await groq.chat.completions.create({
-    model: 'qwen-qwq-32b',
+    model: 'openai/gpt-oss-20b',
     messages:[{ role:'system', content:systemMsg },{ role:'user', content:prompt }],
     max_tokens:600, temperature:0.2,
   });
