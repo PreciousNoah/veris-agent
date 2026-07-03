@@ -1116,9 +1116,10 @@ async function handleOrder(provider, orderId) {
 
       let unwrapDepth = 0;
       while (parsed && typeof parsed === 'object' && unwrapDepth < 5) {
-        if (parsed.type) break;
+        if (parsed.type && !Array.isArray(parsed.entities)) break; // ← CHANGED
         if (parsed.entityType && parsed.entityId) break;
         if (Array.isArray(parsed.agents)) break;
+        if (Array.isArray(parsed.entities) && parsed.entities.length >= 2) break; // ← ADDED
 
         if (typeof parsed.text === 'string') {
           const inner = parseBody(parsed.text);
@@ -1232,8 +1233,7 @@ async function handleOrder(provider, orderId) {
         const SEP    = '══════════════════════════════════════════════';
         const rows   = ranked.map((r, i) =>
           `  ${i + 1}. ${r.name.padEnd(20)} ${String(r.score + '/100').padStart(7)}  ${r.rec}  (${r.sigs.verified}/${r.sigs.total} signals)`
-        ).join('
-');
+        ).join('\n');
 
         const verdict = best
           ? best.score >= 65
