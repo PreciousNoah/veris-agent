@@ -467,7 +467,7 @@ app.post('/audit', async (req, res) => {
       const confidence = confMatch  ? parseInt(confMatch[1])  : 50;
       const incidents = parseIncidentsFromReport(report);
       const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult, incidents);
-      report += buildSentinelBlock(sentinelResult);
+      report += buildSentinelBlock(sentinelResult, trustScore);
     }
 
     res.json({ report });
@@ -1064,6 +1064,18 @@ ${SEP}`;
   }[d.verdict] || '—';
   const actions = (d.recommendedActions || [])
     .map(a => `  ✓ ${a}`).join('\n') || '  ✓ See reasoning above';
+
+  // FIX: Extract trust score from reasoning if not available in inputs
+  let displayedTrustScore = d.inputs?.trustScore ?? trustScore ?? 'N/A';
+  
+  // If still N/A but we have reasoning text, try to extract it
+  if (displayedTrustScore === 'N/A' && d.reason) {
+    const scoreMatch = d.reason.match(/Trust score\s*\((\d+)\/100/i);
+    if (scoreMatch) {
+      displayedTrustScore = parseInt(scoreMatch[1]);
+    }
+  }
+
   return `
 
 ${SEP}
@@ -1072,7 +1084,7 @@ ${SEP}
 ${SEP}
 VERDICT:  ${symbol}  ${d.verdict}
 
-  Trust Score:       ${d.inputs?.trustScore ?? trustScore ?? 'N/A'}/100
+  Trust Score:       ${displayedTrustScore}/100
   Compliance Score:  ${d.complianceScore ?? 'N/A'}/100
   Risk Class:        ${d.riskClass}
   Confidence:        ${d.confidence}
@@ -1116,10 +1128,22 @@ async function handleOrder(provider, orderId) {
 
       let unwrapDepth = 0;
       while (parsed && typeof parsed === 'object' && unwrapDepth < 5) {
-        if (parsed.type && !Array.isArray(parsed.entities)) break; // ← CHANGED
+        if (parsed.type && !Array.isArray(parsed.entities)) break;
         if (parsed.entityType && parsed.entityId) break;
         if (Array.isArray(parsed.agents)) break;
-        if (Array.isArray(parsed.entities) && parsed.entities.length >= 2) break; // ← ADDED
+        if (Array.isArray(parsed.entities) && parsed.entities.length >= 2) break;
+
+        // FIX: If parsed.name contains a JSON string with entities, extract it
+        if (parsed.name && typeof parsed.name === 'string' && parsed.name.includes('"entities"')) {
+          try {
+            const inner = JSON.parse(parsed.name);
+            if (inner && typeof inner === 'object') {
+              parsed = inner;
+              unwrapDepth++;
+              continue;
+            }
+          } catch {}
+        }
 
         if (typeof parsed.text === 'string') {
           const inner = parseBody(parsed.text);
@@ -1144,27 +1168,37 @@ async function handleOrder(provider, orderId) {
 
       // FIX: assignment block handles all valid shapes including entities[] compare format
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.agents)) {
-        // Standard compare: { agents: [...] }
         requirements = parsed;
 
       } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.entities) && parsed.entities.length >= 2) {
-        // Alternative compare format buyers use:
-        // { type: "project", entities: [{ name: "Aave", website: "..." }, { name: "Uniswap" }] }
-        // Normalise into the agents[] shape handleCompare expects
+        // Alternative compare format: { type: "project", entities: ["Aave", "Uniswap", "Compound"] }
+        // OR { type: "project", entities: [{ name: "Aave" }, { name: "Uniswap" }] }
         requirements = {
-          agents: parsed.entities.map(e => ({
-            agentId:            e.name || e.agentId || e.id || 'unknown',
-            agentName:          e.name || e.agentName || e.agentId || 'Unknown',
-            endpointUrl:        e.endpointUrl || null,
-            serviceDescription: e.serviceDescription || e.description || null,
-            category:           e.category || parsed.category || 'general',
-            website:            e.website || null,
-          })),
+          agents: parsed.entities.map(e => {
+            if (typeof e === 'string') {
+              return {
+                agentId: e,
+                agentName: e,
+                endpointUrl: null,
+                serviceDescription: null,
+                category: 'general',
+                website: null,
+              };
+            }
+            return {
+              agentId: e.name || e.agentId || e.id || 'unknown',
+              agentName: e.name || e.agentName || e.agentId || 'Unknown',
+              endpointUrl: e.endpointUrl || null,
+              serviceDescription: e.serviceDescription || e.description || null,
+              category: e.category || parsed.category || 'general',
+              website: e.website || null,
+            };
+          }),
         };
         console.log(`  📊 Normalised entities[] compare: ${requirements.agents.map(a => a.agentName).join(' vs ')}`);
 
       } else if (parsed && typeof parsed === 'object' && parsed.entityType && parsed.entityId) {
-        requirements = parsed;  // trust receipt requests
+        requirements = parsed;
 
       } else if (parsed && typeof parsed === 'object' && parsed.type) {
         requirements = parsed;
@@ -1173,7 +1207,6 @@ async function handleOrder(provider, orderId) {
         requirements = { type: 'project', ...parsed };
 
       } else {
-        // Detect input type to set sensible defaults
         const inputType = detectInputType(String(rawRequirement).trim());
         if (inputType.type === 'uuid') {
           requirements = { type: 'agent', agentId: String(rawRequirement).trim() };
@@ -1190,19 +1223,13 @@ async function handleOrder(provider, orderId) {
 
     console.log('📋 Parsed requirements:', JSON.stringify(requirements));
 
-    // Detect input type for logging and report clarity
     const inputIdentifier = requirements.name || requirements.agentId || requirements.entityId || '';
     const inputType = detectInputType(inputIdentifier);
     console.log(`  🔍 Input detected as: ${inputType.label}`);
 
     let report = '';
 
-    // ── Route by service type ──────────────────────────────────────
-
     if (Array.isArray(requirements.agents) && requirements.agents.length >= 2) {
-      // Detect if this is a project compare or agent compare based on the entity shape
-      // Project compare: entities have website/URL or are known project names without UUIDs
-      // Agent compare: entities have UUID agentIds
       const isProjectCompare = requirements.agents.every(a => {
         const id = a.agentId || '';
         const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -1210,7 +1237,6 @@ async function handleOrder(provider, orderId) {
       });
 
       if (isProjectCompare) {
-        // Run as parallel project audits and format a comparison report
         console.log(`  📊 Project Compare: ${requirements.agents.map(a => a.agentName).join(' vs ')}`);
         const projectResults = await Promise.all(requirements.agents.map(async (agent) => {
           try {
@@ -1267,10 +1293,8 @@ ${SEP}`;
       }
 
     } else if (requirements.entityId && requirements.entityType) {
-      // ── TRUST RECEIPT HISTORY ────────────────────────────────────
       console.log(`  🗄️ Trust Receipt History: ${requirements.entityType} / ${requirements.entityId}`);
 
-      // FIX: normalize entityId before querying — prevents case-mismatch misses
       const receipts = await getTrustReceipts(requirements.entityId.toLowerCase().trim());
 
       if (!receipts || receipts.length === 0) {
@@ -1384,7 +1408,7 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
         const incidents = parseIncidentsFromReport(report);
         const sentinelResult = await fetchSentinelDecision(trustScore, confidence, zeruResult, incidents);
         console.log(`  🔗 SENTINEL: ${sentinelResult.available ? sentinelResult.data?.verdict : sentinelResult.reason}`);
-        report += buildSentinelBlock(sentinelResult);
+        report += buildSentinelBlock(sentinelResult, trustScore);
       }
     }
 
