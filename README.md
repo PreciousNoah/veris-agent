@@ -91,7 +91,7 @@ Submit any CROO agent ID. VERIS investigates across three verification layers:
 Outputs a trust band classification: `Critical | Unverified | Emerging | Established | Trusted`
 
 ### Trust Compare
-Compare multiple projects or agents side-by-side. Submit 2–5 entities and VERIS runs parallel due diligence, ranks by trust score, and outputs a verdict with the strongest option identified.
+Compare multiple previously audited projects or agents side-by-side. Submit 2–5 entities and VERIS compares existing trust reports, ranks entities by trust score, highlights changes, and recommends the strongest option. 
 
 ### ZERU Research Enrichment (A2A)
 Every project audit is automatically enriched by ZERU, a second autonomous agent. ZERU provides:
@@ -220,7 +220,7 @@ SENTINEL_API_URL=https://sentinel-agent-e787.onrender.com
 ```
 GET  /trust/:entityName                    — Structured JSON trust score
 GET  /trust/:entityName?type=agent         — Agent trust score with layer breakdown
-GET  /compare/projects?a=Aave&b=Compound   — Side-by-side project comparison
+GET  /compare/projects?a=Aave&b=Compound    — Compare existing VERIS audit results for two previously audited projects 
 GET  /evidence/:entityName                 — Raw evidence for custom scoring
 GET  /a2a/demo/:entityName                 — Combined VERIS + ZERU output
 GET  /receipts/summary                     — All audited entities, deduped
@@ -231,7 +231,7 @@ GET  /receipts/:entityId                   — Full receipt history for one enti
 
 ```
 POST /audit   — Project or Agent Due Diligence
-POST /compare — Trust Compare (2–5 agents)
+POST /compare — Compare previously audited projects or agents 
 ```
 
 ### CROO Order Format
