@@ -103,6 +103,76 @@ const crooConfig = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
+// MODEL FALLBACK CHAIN
+// ═══════════════════════════════════════════════════════════════════════
+//   1. openai/gpt-oss-20b   — Primary:    fastest (~1000 t/s), cheapest, 65k output
+//   2. openai/gpt-oss-120b  — Fallback #1: higher quality reasoning, 65k output,
+//                             separate capacity pool, better for hard extractions
+//   3. qwen/qwen3-32b       — Fallback #2: different model family, good structured
+//                             extraction, 40k output, diversity if GPT-OSS saturated
+//
+// If all three fail, callers fall back to a deterministic (non-AI) result so the
+// pipeline never hard-fails — see extractEvidence() / scoreWithAI() / verdict
+// generation in runProjectDueDiligence() for the deterministic fallback paths.
+// ═══════════════════════════════════════════════════════════════════════
+const MODEL_FALLBACK_CHAIN = [
+  { id: 'openai/gpt-oss-20b',  label: 'Primary',     maxOutputTokens: 65000 },
+  { id: 'openai/gpt-oss-120b', label: 'Fallback #1', maxOutputTokens: 65000 },
+  { id: 'qwen/qwen3-32b',      label: 'Fallback #2', maxOutputTokens: 40000 },
+];
+
+const MODEL_CALL_TIMEOUT_MS = 45000;
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
+/**
+ * Calls the Groq chat completion endpoint, walking down MODEL_FALLBACK_CHAIN
+ * until one model succeeds. Throws only if every model in the chain fails.
+ *
+ * @param {Array} messages - chat messages array (system/user/etc.)
+ * @param {Object} opts
+ * @param {number} [opts.temperature=0.0]
+ * @param {number} [opts.maxTokens] - override per-call output cap (defaults to the model's own ceiling)
+ * @returns {Promise<{content: string, modelUsed: string, tier: string}>}
+ */
+async function callModelWithFallback(messages, opts = {}) {
+  const { temperature = 0.0, maxTokens } = opts;
+  let lastError = null;
+
+  for (const model of MODEL_FALLBACK_CHAIN) {
+    try {
+      const completion = await withTimeout(
+        groq.chat.completions.create({
+          model: model.id,
+          messages,
+          max_tokens: maxTokens || model.maxOutputTokens,
+          temperature,
+        }),
+        MODEL_CALL_TIMEOUT_MS,
+        model.id
+      );
+      const content = completion?.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Empty response content');
+      if (model.label !== 'Primary') {
+        console.warn(`  ↪ Used ${model.label} (${model.id}) after earlier model(s) failed`);
+      }
+      return { content, modelUsed: model.id, tier: model.label };
+    } catch (err) {
+      lastError = err;
+      console.warn(`  ⚠ [${model.label}] ${model.id} failed: ${err.message}`);
+      continue;
+    }
+  }
+
+  throw new Error(`All models in fallback chain failed (gpt-oss-20b → gpt-oss-120b → qwen3-32b). Last error: ${lastError?.message}`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // SIGNAL GROUND TRUTH — Known facts for established entities
 // These are NOT extracted by Groq. They're ground truth reference data.
 // Applied BEFORE quality gates to ensure known entities aren't penalized
@@ -906,11 +976,29 @@ async function extractEvidence(combinedText, projectName, entityLabel) {
     `}\n\n` +
     `contradictions schema: [{"field":"audit_found","claim_a":"fully audited","source_a":"https://...","claim_b":"no audit found","source_b":"https://..."}]\n` +
     `evidence_citations schema: [{"claim":"field_name","source_url":"https://...","quote":"verbatim >= 25 chars","confidence":0.0-1.0}]`;
-  const response = await groqExtract(prompt);
+
+  // FALLBACK CHAIN: gpt-oss-20b → gpt-oss-120b → qwen3-32b.
+  // If every model fails, we never throw out of this function — we return a
+  // deterministic (non-AI) baseline so the pipeline always produces a report.
+  let response, modelUsed;
   try {
-    return JSON.parse(response.replace(/```json|```/g, '').trim());
+    const result = await groqExtract(prompt);
+    response = result.content;
+    modelUsed = result.modelUsed;
+  } catch (err) {
+    console.error(`  🛑 All fallback models failed for evidence extraction (${projectName}): ${err.message}`);
+    console.error('  → Returning deterministic baseline evidence — NO AI enrichment applied');
+    const baseline = buildBaselineEvidence();
+    baseline._ai_enrichment_failed = true;
+    return baseline;
+  }
+
+  try {
+    const parsed = JSON.parse(response.replace(/```json|```/g, '').trim());
+    parsed._model_used = modelUsed;
+    return parsed;
   } catch {
-    console.warn('  ⚠ Evidence parse failed — neutral baseline');
+    console.warn(`  ⚠ Evidence parse failed (model: ${modelUsed}) — neutral baseline`);
     return buildBaselineEvidence();
   }
 }
@@ -1341,29 +1429,34 @@ function buildSearchQueries(project, entityType) {
 }
 
 async function groqExtract(prompt) {
-  const c = await groq.chat.completions.create({
-    model: 'openai/gpt-oss-20b',
-    messages:[
+  return callModelWithFallback(
+    [
       { role:'system', content:'You are a structured data extraction engine. Return ONLY valid JSON. No markdown, no backticks, no explanation.' },
       { role:'user', content:prompt },
     ],
-    max_tokens:3000, temperature:0.0,
-  });
-  return c.choices[0].message.content;
+    { temperature: 0.0, maxTokens: 3000 }
+  );
 }
 
 async function groqSynthesize(prompt, systemMsg='You are a factual research assistant. Be specific and concise.') {
-  const c = await groq.chat.completions.create({
-    model: 'openai/gpt-oss-20b',
-    messages:[{ role:'system', content:systemMsg },{ role:'user', content:prompt }],
-    max_tokens:600, temperature:0.2,
-  });
-  return c.choices[0].message.content;
+  const { content } = await callModelWithFallback(
+    [
+      { role:'system', content:systemMsg },
+      { role:'user', content:prompt },
+    ],
+    { temperature: 0.2, maxTokens: 600 }
+  );
+  return content;
 }
 
 async function scoreWithAI(prompt) {
-  const r = await groqSynthesize(prompt,'Return ONLY valid JSON. No markdown, no backticks, no preamble.');
-  try { return JSON.parse(r.replace(/```json|```/g,'').trim()); } catch { return null; }
+  try {
+    const r = await groqSynthesize(prompt,'Return ONLY valid JSON. No markdown, no backticks, no preamble.');
+    try { return JSON.parse(r.replace(/```json|```/g,'').trim()); } catch { return null; }
+  } catch (err) {
+    console.warn(`  ⚠ scoreWithAI: all fallback models failed — ${err.message}`);
+    return null;
+  }
 }
 
 async function semanticScore(prompt, response, concept, maxScore=10) {
@@ -1434,6 +1527,7 @@ export async function runProjectDueDiligence(project) {
   const combinedText = searchResults.filter(r => r.text).map(r => `=== ${r.key.toUpperCase()} ===\n${r.text}`).join('\n\n');
   console.log('  → Extracting evidence...');
   const rawEvidence = await extractEvidence(combinedText, project.name, template.label);
+  const aiEnrichmentFailed = rawEvidence._ai_enrichment_failed === true;
   console.log('  → Resolving signals...');
   let evidence = resolveSignals(rawEvidence, project.name, entityKey);
   console.log('  → Validating evidence quality...');
@@ -1513,12 +1607,23 @@ export async function runProjectDueDiligence(project) {
       `Hard trust events: ${hardEvents.map(e=>e.label).join(', ') || 'none'}\n` +
       `Operational risks: ${opRisk.confirmed.map(r=>r.label).join(', ') || 'none'}\n\n` +
       `Rules: Only use facts listed. Legitimacy ≠ quality. If confidence <50%, note limited evidence.`;
-  const verdictText = await groqSynthesize(
-    verdictPrompt,
-    insufficientEvidence
-      ? 'You are a factual research assistant. Acknowledge uncertainty. Do not make claims without evidence.'
-      : 'Write a factual trust audit verdict. Do not add information not listed above. Be direct.'
-  );
+  // FALLBACK CHAIN applies here too. If gpt-oss-20b → gpt-oss-120b → qwen3-32b all
+  // fail, fall back to a deterministic (template-based, non-AI) verdict sentence
+  // rather than throwing and losing the whole report.
+  let verdictText;
+  try {
+    verdictText = await groqSynthesize(
+      verdictPrompt,
+      insufficientEvidence
+        ? 'You are a factual research assistant. Acknowledge uncertainty. Do not make claims without evidence.'
+        : 'Write a factual trust audit verdict. Do not add information not listed above. Be direct.'
+    );
+  } catch (err) {
+    console.error(`  🛑 All fallback models failed for verdict synthesis (${project.name}): ${err.message}`);
+    verdictText = insufficientEvidence
+      ? `Deterministic fallback (AI enrichment unavailable): insufficient evidence to score ${project.name}. Missing mandatory signals: ${evidence._missing_mandatory?.join(', ') || 'all'}.`
+      : `Deterministic fallback (AI enrichment unavailable — all models failed): Legitimacy ${legitimacyScore}/100, Maturity ${maturityScore}/100, Confidence ${Math.round(confidence*100)}%, Operational risk ${opRisk.level}. Recommendation: ${rec.label}. ${rec.text}`;
+  }
   const hardWarn = hardEvents.length > 0
     ? `\n⛔ HARD TRUST EVENT — All scores overridden to 0\n` +
       hardEvents.map(e=>`   ${e.label}\n   Source: ${e.citation.source_url}\n   Quote:  "${e.citation.quote}"`).join('\n')
@@ -1527,6 +1632,9 @@ export async function runProjectDueDiligence(project) {
     ? `\n🛑 SEARCH INFRASTRUCTURE UNAVAILABLE — Scores are N/A, not a trust assessment\n   Live search returned 0 sources across all ${Object.keys(queries).length} queries.\n   This is almost always a search API quota limit or outage — NOT a finding about ${project.name}.\n   Re-run this audit once search access is restored.`
     : insufficientEvidence
     ? `\n⚠  INSUFFICIENT EVIDENCE — Scores are N/A, not 0\n   Missing mandatory signals: ${evidence._missing_mandatory?.join(', ') || 'all'}\n   This does NOT mean the project is illegitimate. It means VERIS cannot verify it.`
+    : '';
+  const aiFailWarn = aiEnrichmentFailed
+    ? `\n🛑 AI ENRICHMENT UNAVAILABLE — All fallback models failed (gpt-oss-20b → gpt-oss-120b → qwen3-32b)\n   This report uses deterministic baseline evidence only. Re-run once model access is restored.`
     : '';
   const lowConfWarn = !insufficientEvidence && confidence < 0.40
     ? `\n⚠  LOW CONFIDENCE (${Math.round(confidence*100)}%): Limited sources. UNKNOWN ≠ negative.`
@@ -1603,7 +1711,7 @@ MATURITY:     ${maturityDisplay}
   Market:         ${insufficientEvidence ? 'N/A' : mat.subScores.market + '/100'}
 CONFIDENCE:   ${confBar(confidence, 20)}
 OP. RISK:     ${opRisk.level}
-${hardWarn}${insufficientWarn}${lowConfWarn}${anomalyWarn}${reasonablenessWarn}
+${hardWarn}${insufficientWarn}${aiFailWarn}${lowConfWarn}${anomalyWarn}${reasonablenessWarn}
 RECOMMENDATION:  ${rec.symbol} ${rec.label}  [Band: ${rec.band}]
 ${rec.text}
 ${incidentsBlock}${gtResult.overridden ? `\n📚 GROUND TRUTH APPLIED: Scores adjusted based on verified reference data for ${project.name}. Raw engine scores: Legitimacy ${legit.legitimacyScore}, Maturity ${mat.maturityScore}.` : ''}
@@ -1651,7 +1759,7 @@ METHODOLOGY
   Ground Truth: Signal resolver applies known facts for established entities
 AUDIT TRAIL
   Search:      Tavily Advanced (${totalSources} sources)
-  Extraction:  Groq qwen-qwq-32b (temperature 0.0)
+  Extraction:  ${aiEnrichmentFailed ? 'FAILED — deterministic baseline used (gpt-oss-20b → gpt-oss-120b → qwen3-32b all failed)' : `Groq fallback chain (model used: ${rawEvidence._model_used || 'unknown'})`}
   Resolver:    Signal resolver + confidence gate + source validation
   Scoring:     Deterministic code + reasonableness check
   Auditor:     VERIS · CROO v1 · Base Mainnet
@@ -2473,4 +2581,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
   }
 
   throw new Error('Invalid type. Use "project" or "agent".');
-}
+} 
