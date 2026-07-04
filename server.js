@@ -37,50 +37,33 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // ════════════════════════════════════════════════════════════════════
 // INPUT TYPE DETECTION
-// Detects what kind of identifier was submitted so VERIS can explain
-// clearly what it received and what type of audit will run.
 // ════════════════════════════════════════════════════════════════════
 
 function detectInputType(input) {
   if (!input) return { type: 'unknown', label: 'Unknown input', hint: '' };
   const s = input.trim();
 
-  // UUID — CROO agent IDs
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) {
     return { type: 'uuid', label: 'CROO Agent ID (UUID)', hint: 'Running agent due diligence.' };
   }
-
-  // Ethereum / EVM wallet or contract
   if (/^0x[a-fA-F0-9]{40}$/.test(s)) {
     return { type: 'evm_address', label: 'EVM Wallet / Contract Address', hint: 'Running project due diligence on this address.' };
   }
-
-  // Solana address
   if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s) && !s.includes(' ')) {
     return { type: 'solana_address', label: 'Solana Address', hint: 'Running project due diligence on this address.' };
   }
-
-  // GitHub URL or shorthand
   if (/github\.com\//i.test(s)) {
     return { type: 'github', label: 'GitHub Repository', hint: 'Running project due diligence using this repository.' };
   }
-
-  // General URL / website
   if (/^https?:\/\//i.test(s) || /^www\./i.test(s)) {
     return { type: 'url', label: 'Website URL', hint: 'Running project due diligence on this website.' };
   }
-
-  // CROO agent store URL pattern
   if (/agent\.croo\.network/i.test(s)) {
     return { type: 'croo_url', label: 'CROO Agent Store URL', hint: 'Running agent due diligence.' };
   }
-
-  // Known agent-like names
   if (/\bagent\b|\bbot\b|\bai\b|\bauto/i.test(s)) {
     return { type: 'agent_name', label: 'Agent Name', hint: 'Running agent due diligence.' };
   }
-
-  // Default — treat as project name
   return { type: 'project_name', label: 'Project Name', hint: 'Running project due diligence.' };
 }
 
@@ -179,8 +162,6 @@ function receiptToTrustJSON(receipt, cached = true) {
 
 // ════════════════════════════════════════════════════════════════════
 // INSUFFICIENT DATA EXPLANATION
-// Called when a report comes back with N/A scores.
-// Generates a clear, human-readable explanation of why.
 // ════════════════════════════════════════════════════════════════════
 
 function buildInsufficientDataBlock(entityName, inputType, entityType) {
@@ -249,12 +230,9 @@ ${SEP}`;
 
 // ════════════════════════════════════════════════════════════════════
 // RICHER FINAL REASONING
-// Appends a score explanation block after the VERDICT section.
-// Shows exactly why points were gained or lost.
 // ════════════════════════════════════════════════════════════════════
 
 function buildReasoningBlock(report) {
-  // Extract key numbers from report
   const legitimacy   = report.match(/LEGITIMACY:\s+(\d+)\/100/)?.[1];
   const maturity     = report.match(/MATURITY:\s+(\d+)\/100/)?.[1];
   const confidence   = report.match(/CONFIDENCE:.*?(\d+)%/)?.[1];
@@ -263,11 +241,9 @@ function buildReasoningBlock(report) {
   const verification = report.match(/Verification:\s+(\d+)\/100/)?.[1];
   const reputation   = report.match(/Reputation:\s+(\d+)\/100/)?.[1];
 
-  if (!legitimacy) return ''; // N/A report — no reasoning block needed
+  if (!legitimacy) return '';
 
   const lines = [];
-
-  // Explain each dimension
   const dims = [
     { name: 'Identity',     score: parseInt(identity     || '0') },
     { name: 'Transparency', score: parseInt(transparency || '0') },
@@ -292,7 +268,6 @@ function buildReasoningBlock(report) {
 
   lines.push('');
 
-  // Confidence explanation
   const conf = parseInt(confidence || '0');
   if (conf >= 80) {
     lines.push(`  Confidence (${conf}%) — High. Strong multi-source agreement across official and media sources.`);
@@ -304,7 +279,6 @@ function buildReasoningBlock(report) {
     lines.push(`  Confidence (${conf}%) — Very low. Minimal evidence. Re-run with a website or GitHub URL for better results.`);
   }
 
-  // What pulled the score down
   const weakDims = dims.filter(d => d.score < 50);
   if (weakDims.length > 0) {
     lines.push('');
@@ -322,7 +296,6 @@ function buildReasoningBlock(report) {
     }
   }
 
-  // What to do to improve
   if (weakDims.length > 0 || conf < 60) {
     lines.push('');
     lines.push('  HOW TO IMPROVE THIS SCORE');
@@ -445,7 +418,6 @@ app.post('/audit', async (req, res) => {
   try {
     let report = await runVERIS(requirements, REQUESTER_SDK_KEY);
 
-    // Append insufficient data block if score is N/A
     if (report.includes('N/A (Insufficient Evidence)') || report.includes('INSUFFICIENT DATA')) {
       const inputType = detectInputType(requirements.name || requirements.agentId || '');
       report += buildInsufficientDataBlock(
@@ -454,7 +426,6 @@ app.post('/audit', async (req, res) => {
         requirements.type || 'project'
       );
     } else {
-      // Append richer reasoning block
       report += buildReasoningBlock(report);
     }
 
@@ -968,7 +939,6 @@ async function fetchSentinelDecision(trustScore, confidence, zeruResult, inciden
   const sentiment   = zeruResult?.data?.sentiment || 'neutral';
   const riskFactors = zeruResult?.data?.risks     || [];
 
-  // Serialize incidents to plain strings — prevents [object Object] in SENTINEL output
   const serializedIncidents = (incidents || []).map(i => {
     if (typeof i === 'string') return i;
     if (i && typeof i === 'object') {
@@ -977,7 +947,6 @@ async function fetchSentinelDecision(trustScore, confidence, zeruResult, inciden
     return String(i);
   });
 
-  // Serialize risk factors to strings too
   const serializedRisks = (riskFactors || []).map(r => {
     if (typeof r === 'string') return r;
     if (r && typeof r === 'object') {
@@ -1065,10 +1034,8 @@ ${SEP}`;
   const actions = (d.recommendedActions || [])
     .map(a => `  ✓ ${a}`).join('\n') || '  ✓ See reasoning above';
 
-  // FIX: Extract trust score from reasoning if not available in inputs
   let displayedTrustScore = d.inputs?.trustScore ?? trustScore ?? 'N/A';
   
-  // If still N/A but we have reasoning text, try to extract it
   if (displayedTrustScore === 'N/A' && d.reason) {
     const scoreMatch = d.reason.match(/Trust score\s*\((\d+)\/100/i);
     if (scoreMatch) {
@@ -1133,7 +1100,6 @@ async function handleOrder(provider, orderId) {
         if (Array.isArray(parsed.agents)) break;
         if (Array.isArray(parsed.entities) && parsed.entities.length >= 2) break;
 
-        // FIX: If parsed.name contains a JSON string with entities, extract it
         if (parsed.name && typeof parsed.name === 'string' && parsed.name.includes('"entities"')) {
           try {
             const inner = JSON.parse(parsed.name);
@@ -1166,13 +1132,10 @@ async function handleOrder(provider, orderId) {
         console.log(`  📦 Unwrapped ${unwrapDepth} layer(s) of CROO wrapping`);
       }
 
-      // FIX: assignment block handles all valid shapes including entities[] compare format
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.agents)) {
         requirements = parsed;
 
       } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.entities) && parsed.entities.length >= 2) {
-        // Alternative compare format: { type: "project", entities: ["Aave", "Uniswap", "Compound"] }
-        // OR { type: "project", entities: [{ name: "Aave" }, { name: "Uniswap" }] }
         requirements = {
           agents: parsed.entities.map(e => {
             if (typeof e === 'string') {
@@ -1248,24 +1211,52 @@ async function handleOrder(provider, orderId) {
             const score = parseScoreFromReport(projectReport);
             const rec   = parseRecommendationFromReport(projectReport);
             const sigs  = parseSignalsFromReport(projectReport);
-            return { name: agent.agentName, score, rec, sigs, error: null };
+            const isInsufficient = projectReport.includes('N/A (Insufficient Evidence)') ||
+                                   projectReport.includes('INSUFFICIENT DATA');
+            return { name: agent.agentName, score, rec, sigs, error: null, isInsufficient };
           } catch (err) {
-            return { name: agent.agentName, score: null, rec: 'Error', sigs: { verified: 0, total: 0 }, error: err.message };
+            return { name: agent.agentName, score: null, rec: 'Error', sigs: { verified: 0, total: 0 }, error: err.message, isInsufficient: false };
           }
         }));
 
-        const ranked = [...projectResults].filter(r => r.score !== null).sort((a, b) => (b.score || 0) - (a.score || 0));
-        const best   = ranked[0];
-        const SEP    = '══════════════════════════════════════════════';
-        const rows   = ranked.map((r, i) =>
-          `  ${i + 1}. ${r.name.padEnd(20)} ${String(r.score + '/100').padStart(7)}  ${r.rec}  (${r.sigs.verified}/${r.sigs.total} signals)`
-        ).join('\n');
+        // Sort: scored entities first (desc), then insufficient data, then errors
+        const ranked = [...projectResults].sort((a, b) => {
+          if (a.error && !b.error) return 1;
+          if (!a.error && b.error) return -1;
+          if (a.isInsufficient && !b.isInsufficient) return 1;
+          if (!a.isInsufficient && b.isInsufficient) return -1;
+          if (a.score === null && b.score !== null) return 1;
+          if (a.score !== null && b.score === null) return -1;
+          return (b.score || 0) - (a.score || 0);
+        });
 
-        const verdict = best
-          ? best.score >= 65
+        const best   = ranked.find(r => r.score !== null && !r.isInsufficient);
+        const SEP    = '══════════════════════════════════════════════';
+        const rows   = ranked.map((r, i) => {
+          if (r.error) {
+            return `  ${i + 1}. ${r.name.padEnd(20)} ERROR     ${r.error}`;
+          }
+          if (r.isInsufficient || r.score === null) {
+            return `  ${i + 1}. ${r.name.padEnd(20)} N/A       Insufficient Data`;
+          }
+          return `  ${i + 1}. ${r.name.padEnd(20)} ${String(r.score + '/100').padStart(7)}  ${r.rec}  (${r.sigs.verified}/${r.sigs.total} signals)`;
+        }).join('\n');
+
+        const allScored = projectResults.filter(r => r.score !== null);
+        const insufficientCount = projectResults.filter(r => r.isInsufficient || (r.score === null && !r.error)).length;
+
+        let verdict = '';
+        if (allScored.length === 0) {
+          verdict = 'No projects returned sufficient data for scoring. Run individual audits with website/GitHub URLs for better results.';
+        } else if (best) {
+          verdict = best.score >= 65
             ? `${best.name} has the strongest trust signals (${best.score}/100).`
-            : `All compared projects have limited signals. Strongest: ${best.name} (${best.score}/100). Proceed with caution.`
-          : 'Insufficient data across all compared projects.';
+            : `All compared projects have limited signals. Strongest: ${best.name} (${best.score}/100). Proceed with caution.`;
+        }
+
+        if (insufficientCount > 0) {
+          verdict += ` ${insufficientCount} project${insufficientCount > 1 ? 's' : ''} could not be scored due to insufficient evidence.`;
+        }
 
         report = `VERIS PROJECT TRUST COMPARE
 ${SEP}
@@ -1381,7 +1372,6 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
 
       report = await runVERIS(requirements, REQUESTER_SDK_KEY);
 
-      // Append insufficient data explanation if needed
       if (report.includes('N/A (Insufficient Evidence)') || report.includes('INSUFFICIENT DATA')) {
         report += buildInsufficientDataBlock(
           requirements.name || requirements.agentId || 'Unknown',
@@ -1389,11 +1379,9 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
           requirements.type
         );
       } else {
-        // Append richer reasoning
         report += buildReasoningBlock(report);
       }
 
-      // A2A enrichment — ZERU + SENTINEL (project audits only)
       if (requirements.type === 'project' && requirements.name) {
         console.log(`  🔗 A2A: calling ZERU for ${requirements.name}...`);
         const zeruResult = await fetchZeruEnrichment(requirements.name);
