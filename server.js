@@ -1200,26 +1200,40 @@ async function handleOrder(provider, orderId) {
       });
 
       if (isProjectCompare) {
-        console.log(`  📊 Project Compare: ${requirements.agents.map(a => a.agentName).join(' vs ')}`);
+        console.log(`  📊 Project Compare (from receipts): ${requirements.agents.map(a => a.agentName).join(' vs ')}`);
+        
+        // Look up receipts for each entity — NO fresh audits
         const projectResults = await Promise.all(requirements.agents.map(async (agent) => {
+          const name = (agent.agentName || agent.agentId || '').toLowerCase().trim();
+          if (!name) return { name: agent.agentName || 'Unknown', score: null, rec: 'Unknown', sigs: { verified: 0, total: 0 }, error: null, isInsufficient: true, note: 'No entity name provided' };
+          
           try {
-            const projectReport = await runVERIS({
-              type:    'project',
-              name:    agent.agentName || agent.agentId,
-              website: agent.website || null,
-            }, REQUESTER_SDK_KEY);
-            const score = parseScoreFromReport(projectReport);
-            const rec   = parseRecommendationFromReport(projectReport);
-            const sigs  = parseSignalsFromReport(projectReport);
-            const isInsufficient = projectReport.includes('N/A (Insufficient Evidence)') ||
-                                   projectReport.includes('INSUFFICIENT DATA');
-            return { name: agent.agentName, score, rec, sigs, error: null, isInsufficient };
+            const receipts = await getTrustReceipts(name, 1);
+            if (!receipts || receipts.length === 0) {
+              return { name: agent.agentName, score: null, rec: 'Unknown', sigs: { verified: 0, total: 0 }, error: null, isInsufficient: true, note: 'Not yet audited — run a VERIS trust audit first' };
+            }
+            const latest = receipts[0];
+            const score = latest.score;
+            const sigs = { verified: latest.signals_verified || 0, total: latest.signals_total || 0 };
+            
+            // Derive recommendation from score
+            let rec = 'Unknown';
+            if (score !== null) {
+              if (score >= 85) rec = 'STRONGLY TRUSTED';
+              else if (score >= 80) rec = 'TRUSTED';
+              else if (score >= 65) rec = 'GENERALLY LEGITIMATE';
+              else if (score >= 50) rec = 'MIXED SIGNALS';
+              else if (score >= 30) rec = 'HIGH RISK';
+              else rec = 'CRITICAL RISK';
+            }
+            
+            return { name: agent.agentName, score, rec, sigs, error: null, isInsufficient: false, lastAudited: latest.created_at };
           } catch (err) {
-            return { name: agent.agentName, score: null, rec: 'Error', sigs: { verified: 0, total: 0 }, error: err.message, isInsufficient: false };
+            return { name: agent.agentName, score: null, rec: 'Error', sigs: { verified: 0, total: 0 }, error: err.message, isInsufficient: true };
           }
         }));
 
-        // Sort: scored entities first (desc), then insufficient data, then errors
+        // Sort: scored entities first (desc), then insufficient/not-yet-audited, then errors
         const ranked = [...projectResults].sort((a, b) => {
           if (a.error && !b.error) return 1;
           if (!a.error && b.error) return -1;
@@ -1236,18 +1250,19 @@ async function handleOrder(provider, orderId) {
           if (r.error) {
             return `  ${i + 1}. ${r.name.padEnd(20)} ERROR     ${r.error}`;
           }
-          if (r.isInsufficient || r.score === null) {
-            return `  ${i + 1}. ${r.name.padEnd(20)} N/A       Insufficient Data`;
+          if (r.isInsufficient) {
+            return `  ${i + 1}. ${r.name.padEnd(20)} N/A       ${r.note || 'Insufficient Data'}`;
           }
-          return `  ${i + 1}. ${r.name.padEnd(20)} ${String(r.score + '/100').padStart(7)}  ${r.rec}  (${r.sigs.verified}/${r.sigs.total} signals)`;
+          const age = r.lastAudited ? `  (audited ${new Date(r.lastAudited).toLocaleDateString('en-GB')})` : '';
+          return `  ${i + 1}. ${r.name.padEnd(20)} ${String(r.score + '/100').padStart(7)}  ${r.rec}  (${r.sigs.verified}/${r.sigs.total} signals)${age}`;
         }).join('\n');
 
         const allScored = projectResults.filter(r => r.score !== null);
-        const insufficientCount = projectResults.filter(r => r.isInsufficient || (r.score === null && !r.error)).length;
+        const insufficientCount = projectResults.filter(r => r.isInsufficient).length;
 
         let verdict = '';
         if (allScored.length === 0) {
-          verdict = 'No projects returned sufficient data for scoring. Run individual audits with website/GitHub URLs for better results.';
+          verdict = 'No projects have been audited yet. Run individual VERIS trust audits first, then compare.';
         } else if (best) {
           verdict = best.score >= 65
             ? `${best.name} has the strongest trust signals (${best.score}/100).`
@@ -1255,22 +1270,26 @@ async function handleOrder(provider, orderId) {
         }
 
         if (insufficientCount > 0) {
-          verdict += ` ${insufficientCount} project${insufficientCount > 1 ? 's' : ''} could not be scored due to insufficient evidence.`;
+          verdict += ` ${insufficientCount} project${insufficientCount > 1 ? 's' : ''} ${insufficientCount === 1 ? 'has' : 'have'} not been audited yet. Run a VERIS trust audit for each to see their scores here.`;
         }
 
         report = `VERIS PROJECT TRUST COMPARE
 ${SEP}
 Compared:  ${projectResults.map(r => r.name).join(', ')}
-Audited:   ${new Date().toUTCString()}
+Queried:   ${new Date().toUTCString()}
 Audited by: VERIS — Trust Infrastructure for the Agent Economy
 ${SEP}
-RANKING
+RANKING  (from existing audit receipts)
 
 ${rows}
 
 ${SEP}
 RECOMMENDATION
   ${verdict}
+${SEP}
+NOTE
+  Scores are from the latest audit receipt for each project.
+  Run a fresh VERIS trust audit to update any score before comparing.
 ${SEP}
 AUDIT TRAIL
   Auditor: VERIS · CROO v1 · Base Mainnet
