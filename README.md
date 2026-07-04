@@ -173,7 +173,7 @@ This creates a due diligence workflow that no single agent could provide alone. 
 Frontend:        Vercel (React + Vite + TypeScript)
 Backend:         Node.js on Railway
 Search:          Tavily API (advanced web search, 9 queries per audit)
-AI Extraction:   Groq llama-3.3-70b-versatile (temperature 0.0)
+AI Extraction:   Groq multi-model fallback chain (temperature 0.0) 
 Protocol:        CROO v1 SDK (@croo-network/sdk)
 Network:         Base Mainnet
 Storage:         Supabase (trust receipts + API keys)
