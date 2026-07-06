@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import pkg from '@croo-network/sdk';
 const { AgentClient, EventType, DeliverableType } = pkg;
-import { runVERIS, handleCompare, getTrustReceipts, supabase } from './veris.js';
+import { runVERIS, handleCompare, getTrustReceipts, supabase, getCachedZeruResult, setCachedZeruResult, fetchZeruEnrichment } from './veris.js'; 
 import fs from 'fs';
 
 const app = express();
@@ -915,6 +915,10 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════
 
 async function fetchZeruEnrichment(entityName) {
+  // Check cache first
+  const cached = getCachedZeruResult(entityName);
+  if (cached) return cached;
+
   const zeruUrl = process.env.ZERU_API_URL;
   if (!zeruUrl) return { available: false, reason: 'ZERU_API_URL not configured' };
   try {
@@ -927,9 +931,11 @@ async function fetchZeruEnrichment(entityName) {
     );
     if (!res.ok) return { available: false, reason: `ZERU returned ${res.status}` };
     const data = await res.json();
-    return { available: true, data };
+    const result = { available: true, data };
+    setCachedZeruResult(entityName, result);
+    return result;
   } catch (err) {
-    return { available: false, reason: err.name === 'TimeoutError' ? 'ZERU timed out (20s)' : err.message };
+    return { available: false, reason: err.name === 'TimeoutError' ? 'ZERU timed out' : err.message };
   }
 }
 
