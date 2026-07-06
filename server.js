@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import pkg from '@croo-network/sdk';
 const { AgentClient, EventType, DeliverableType } = pkg;
-import { runVERIS, handleCompare, getTrustReceipts, supabase, getCachedZeruResult, setCachedZeruResult, fetchZeruEnrichment } from './veris.js';
+import { runVERIS, handleCompare, getTrustReceipts, supabase } from './veris.js';
 import fs from 'fs';
 
 const app = express();
@@ -914,7 +914,24 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 // A2A ENRICHMENT FUNCTIONS
 // ════════════════════════════════════════════════════════════════════
 
-// fetchZeruEnrichment is imported from veris.js — no local definition needed
+async function fetchZeruEnrichment(entityName) {
+  const zeruUrl = process.env.ZERU_API_URL;
+  if (!zeruUrl) return { available: false, reason: 'ZERU_API_URL not configured' };
+  try {
+    const res = await fetch(
+      `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
+      {
+        headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
+        signal:  AbortSignal.timeout(20000),
+      }
+    );
+    if (!res.ok) return { available: false, reason: `ZERU returned ${res.status}` };
+    const data = await res.json();
+    return { available: true, data };
+  } catch (err) {
+    return { available: false, reason: err.name === 'TimeoutError' ? 'ZERU timed out (20s)' : err.message };
+  }
+}
 
 async function fetchSentinelDecision(trustScore, confidence, zeruResult, incidents = []) {
   const sentinelUrl = process.env.SENTINEL_API_URL;
@@ -960,8 +977,8 @@ function buildEnrichmentBlock(zeruResult, entityName) {
 
 ${SEP}
 [2] ZERU — Research Intelligence
-   Status: Unavailable (${zeruResult.reason})
-   Note:   VERIS trust report above remains valid.
+    Status: Unavailable (${zeruResult.reason})
+    Falling back to deterministic trust engine to ensure uninterrupted audits.
 ${SEP}`;
   }
   const d = zeruResult.data;
@@ -999,6 +1016,7 @@ function buildSentinelBlock(sentinelResult, trustScore = null) {
 ${SEP}
 [3] SENTINEL — Compliance Decision
     Status: Unavailable (${sentinelResult.reason})
+    Falling back to deterministic trust engine to ensure uninterrupted audits.
 ${SEP}
 A2A CONTRIBUTORS
   [1] VERIS    — Trust Verification & Scoring    OK
@@ -1271,6 +1289,7 @@ NOTE
   Scores are from the latest audit receipt for each project.
   Run a fresh VERIS trust audit to update any score before comparing.
 ${SEP}
+VERIS Trust Engine v1.0 · Knowledge Base v2026.07
 AUDIT TRAIL
   Auditor: VERIS · CROO v1 · Base Mainnet
   Projects compared: ${projectResults.length}
@@ -1306,7 +1325,9 @@ HOW TO GET STARTED
   3. Place this Trust Receipt History order again
      to see the score trend.
 ══════════════════════════════════════════════
-Auditor: VERIS · CROO v1 · Base Mainnet`;
+VERIS Trust Engine v1.0 · Knowledge Base v2026.07
+AUDIT TRAIL
+  Auditor: VERIS · CROO v1 · Base Mainnet`;
       } else {
         const latest = receipts[0];
         const oldest = receipts[receipts.length - 1];
@@ -1359,10 +1380,13 @@ WHAT THIS MEANS
     '30 days to track continued trend.'
   }
 ══════════════════════════════════════════════
-Auditor: VERIS · CROO v1 · Base Mainnet`;
+VERIS Trust Engine v1.0 · Knowledge Base v2026.07
+AUDIT TRAIL
+  Auditor: VERIS · CROO v1 · Base Mainnet`;
       }
 
     } else {
+      // ── STANDARD TRUST AUDIT ──────────────────────────────────────
       if (!requirements.type) requirements.type = 'project';
       if (requirements.type === 'project' && !requirements.name) {
         requirements.name = String(rawRequirement || 'Unknown').trim();
