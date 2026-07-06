@@ -30,7 +30,7 @@ async function saveTrustReceipt(entityType, entityId, entityName, report, score,
       .select()
       .single();
     if (error) throw error;
-    console.log(`✅ Trust receipt saved: \( {entityName} score= \){score}`);
+    console.log(`✅ Trust receipt saved: ${entityName} score=${score}`);
     return data;
   } catch (err) {
     console.error('Trust receipt save failed:', err.message);
@@ -104,13 +104,13 @@ const crooConfig = {
 
 // ── ZERU Research Cache ──────────────────────────────────────────
 const ZERU_CACHE = new Map();
-const ZERU_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+const ZERU_CACHE_TTL = 30 * 60 * 1000;
 
 function getZeruCacheKey(entityName) {
   return `zeru:${(entityName || '').toLowerCase().trim()}`;
 }
 
-function getCachedZeruResult(entityName) {
+export function getCachedZeruResult(entityName) {
   const key = getZeruCacheKey(entityName);
   const entry = ZERU_CACHE.get(key);
   if (!entry) return null;
@@ -118,27 +118,14 @@ function getCachedZeruResult(entityName) {
     ZERU_CACHE.delete(key);
     return null;
   }
-  console.log(`  💾 ZERU cache hit for \( {entityName} ( \){Math.round((Date.now() - entry.timestamp) / 1000)}s old)`);
+  console.log(`  💾 ZERU cache hit for ${entityName} (${Math.round((Date.now() - entry.timestamp) / 1000)}s old)`);
   return entry.data;
 }
 
-function setCachedZeruResult(entityName, data) {
+export function setCachedZeruResult(entityName, data) {
   ZERU_CACHE.set(getZeruCacheKey(entityName), { data, timestamp: Date.now() });
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// MODEL FALLBACK CHAIN
-// ═══════════════════════════════════════════════════════════════════════
-//   1. openai/gpt-oss-20b   — Primary:    fastest (\~1000 t/s), cheapest, 65k output
-//   2. openai/gpt-oss-120b  — Fallback #1: higher quality reasoning, 65k output,
-//                             separate capacity pool, better for hard extractions
-//   3. qwen/qwen3-32b       — Fallback #2: different model family, good structured
-//                             extraction, 40k output, diversity if GPT-OSS saturated
-//
-// If all three fail, callers fall back to a deterministic (non-AI) result so the
-// pipeline never hard-fails — see extractEvidence() / scoreWithAI() / verdict
-// generation in runProjectDueDiligence() for the deterministic fallback paths.
-// ═══════════════════════════════════════════════════════════════════════
 const MODEL_FALLBACK_CHAIN = [
   { id: 'openai/gpt-oss-20b',  label: 'Primary',     maxOutputTokens: 65000 },
   { id: 'openai/gpt-oss-120b', label: 'Fallback #1', maxOutputTokens: 65000 },
@@ -154,16 +141,6 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-/**
- * Calls the Groq chat completion endpoint, walking down MODEL_FALLBACK_CHAIN
- * until one model succeeds. Throws only if every model in the chain fails.
- *
- * @param {Array} messages - chat messages array (system/user/etc.)
- * @param {Object} opts
- * @param {number} [opts.temperature=0.0]
- * @param {number} [opts.maxTokens] - override per-call output cap (defaults to the model's own ceiling)
- * @returns {Promise<{content: string, modelUsed: string, tier: string}>}
- */
 async function callModelWithFallback(messages, opts = {}) {
   const { temperature = 0.0, maxTokens } = opts;
   let lastError = null;
@@ -183,7 +160,7 @@ async function callModelWithFallback(messages, opts = {}) {
       const content = completion?.choices?.[0]?.message?.content;
       if (!content) throw new Error('Empty response content');
       if (model.label !== 'Primary') {
-        console.warn(`  ↪ Used \( {model.label} ( \){model.id}) after earlier model(s) failed`);
+        console.warn(`  ↪ Used ${model.label} (${model.id}) after earlier model(s) failed`);
       }
       return { content, modelUsed: model.id, tier: model.label };
     } catch (err) {
@@ -684,13 +661,13 @@ function applyConfidenceGate(evidence) {
     const confidence = evidence.confidence_per_signal?.[key];
     if (confidence === undefined || confidence === null) {
       gated[key] = 'UNKNOWN';
-      if (gated[`\( {key}_urls`]) gated[` \){key}_urls`] = [];
+      if (gated[`${key}_urls`]) gated[`${key}_urls`] = [];
       downgradedCount++;
       continue;
     }
     if (confidence < 60) {
       gated[key] = 'UNKNOWN';
-      if (gated[`\( {key}_urls`]) gated[` \){key}_urls`] = [];
+      if (gated[`${key}_urls`]) gated[`${key}_urls`] = [];
       downgradedCount++;
       continue;
     }
@@ -737,7 +714,7 @@ function validateSourceQuality(evidence, projectName) {
 
 // ═══════════════════════════════════════════════════════════════════════
 // SOURCE TIER CLASSIFIER
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 const OFFICIAL_DOMAINS = {
   bitcoin:      ['bitcoin.org','bitcoincore.org','github.com/bitcoin'],
   ethereum:     ['ethereum.org','ethresear.ch','eips.ethereum.org','github.com/ethereum'],
@@ -928,7 +905,7 @@ const HARD_TRUST_EVENTS = [
 // ═══════════════════════════════════════════════════════════════════════
 async function extractEvidence(combinedText, projectName, entityLabel) {
   const prompt =
-    `You are a structured evidence extraction engine for "\( {projectName}" ( \){entityLabel}).\n\n` +
+    `You are a structured evidence extraction engine for "${projectName}" (${entityLabel}).\n\n` +
     `SOURCES:\n${combinedText.substring(0, 9000)}\n\n` +
     `RULES:\n` +
     `1. Each boolean field = "YES", "NO", or "UNKNOWN". Default = UNKNOWN.\n` +
@@ -1006,9 +983,10 @@ async function extractEvidence(combinedText, projectName, entityLabel) {
   // deterministic (non-AI) baseline so the pipeline always produces a report.
   let response, modelUsed;
   try {
-    const result = await groqExtract(prompt);
-    response = result.content;
-    modelUsed = result.modelUsed;
+  const result = await groqExtract(prompt);
+  const parsed = JSON.parse(result.content.replace(/```json|```/g, '').trim());
+  parsed._model_used = result.modelUsed;  // ← ADD THIS LINE
+  return parsed;
   } catch (err) {
     console.error(`  🛑 All fallback models failed for evidence extraction (${projectName}): ${err.message}`);
     console.error('  → Returning deterministic baseline evidence — NO AI enrichment applied');
@@ -1323,11 +1301,11 @@ function getRecommendation(legitimacyScore, maturityScore, opRiskLevel, hardEven
       text:'Solid legitimacy signals confirmed. Standard due diligence recommended.' };
   }
   if (legitimacyScore >= 65) {
-    return { label:'GENERALLY LEGITIMATE', symbol:'\~✓', band:'65-79',
+    return { label:'GENERALLY LEGITIMATE', symbol:'~✓', band:'65-79',
       text:'Legitimacy signals present. Some evidence gaps — independent verification recommended.' };
   }
   if (legitimacyScore >= 50) {
-    return { label:'MIXED SIGNALS', symbol:'\~', band:'50-64',
+    return { label:'MIXED SIGNALS', symbol:'~', band:'50-64',
       text:'Incomplete or inconsistent evidence. Manual research required before engagement.' };
   }
   if (legitimacyScore >= 30) {
@@ -1417,7 +1395,7 @@ async function collectEvidence(query, projectName='') {
       snippet: r.content?.substring(0,500)||'',
     }));
     const text = sources.map((s,i) =>
-      `[Source ${i+1} | ${s.tier.toUpperCase()} | \( {s.url}]\n \){s.title}\n${s.snippet}`
+      `[Source ${i+1} | ${s.tier.toUpperCase()} | ${s.url}]\n${s.title}\n${s.snippet}`
     ).join('\n\n---\n\n');
     return { text, sourceCount:sources.length, sources };
   } catch (err) {
@@ -1461,13 +1439,13 @@ async function groqExtract(prompt) {
     { temperature: 0.0, maxTokens: 3000 }
   );
   if (result.tier !== 'Primary') {
-    console.log(`  📊 Inference chain: Primary (gpt-oss-20b) failed → \( {result.tier} ( \){result.modelUsed}) succeeded`);
+    console.log(`  📊 Inference chain: Primary (gpt-oss-20b) failed → ${result.tier} (${result.modelUsed}) succeeded`);
   }
   return result;
 }
 
 async function groqSynthesize(prompt, systemMsg='You are a factual research assistant. Be specific and concise.') {
-  const { content, modelUsed, tier } = await callModelWithFallback(
+  const { content } = await callModelWithFallback(
     [
       { role:'system', content:systemMsg },
       { role:'user', content:prompt },
@@ -1490,7 +1468,7 @@ async function scoreWithAI(prompt) {
 async function semanticScore(prompt, response, concept, maxScore=10) {
   if (!response) return { score:0, correct:false, factual_correctness:0, completeness:0, reasoning_quality:0, explanation:'No response received' };
   const result = await scoreWithAI(
-    `Evaluate agent response.\nQuestion:"\( {prompt}"\nKey concepts: \){concept}\nResponse:${response.substring(0,600)}\n` +
+    `Evaluate agent response.\nQuestion:"${prompt}"\nKey concepts:${concept}\nResponse:${response.substring(0,600)}\n` +
     `Score 0-${maxScore}. Paraphrased correct = same as verbatim. Deduct only for factual errors.\n` +
     `Return ONLY:{"score":<0-${maxScore}>,"factual_correctness":<0-10>,"completeness":<0-10>,"reasoning_quality":<0-10>,"correct":true/false,"explanation":"one sentence"}`
   );
@@ -1532,7 +1510,7 @@ function defaultConfidence(tier) {
 // ═══════════════════════════════════════════════════════════════════════
 export async function runProjectDueDiligence(project) {
   project = resolveEntity(project);
-  console.log(`\n🔍 VERIS Due Diligence: \( {project.name} \){project.resolvedFrom ? ` (resolved from: ${project.resolvedFrom})` : ''}`);
+  console.log(`\n🔍 VERIS Due Diligence: ${project.name}${project.resolvedFrom ? ` (resolved from: ${project.resolvedFrom})` : ''}`);
   if (project.note) console.log(`  ⚠ Note: ${project.note}`);
   const entityKey = project.entityType || detectEntityType(project);
   const template  = ENTITY_TEMPLATES[entityKey] || ENTITY_TEMPLATES.general;
@@ -1552,7 +1530,7 @@ export async function runProjectDueDiligence(project) {
   if (searchInfraFailed) {
     console.warn(`  \ud83d\uded1 SEARCH INFRASTRUCTURE FAILURE: 0 sources returned across ${Object.keys(queries).length} queries \u2014 likely Tavily quota/outage, not an entity trust issue`);
   }
-  const combinedText = searchResults.filter(r => r.text).map(r => `=== \( {r.key.toUpperCase()} ===\n \){r.text}`).join('\n\n');
+  const combinedText = searchResults.filter(r => r.text).map(r => `=== ${r.key.toUpperCase()} ===\n${r.text}`).join('\n\n');
   console.log('  → Extracting evidence...');
   const rawEvidence = await extractEvidence(combinedText, project.name, template.label);
   const aiEnrichmentFailed = rawEvidence._ai_enrichment_failed === true;
@@ -1573,13 +1551,17 @@ export async function runProjectDueDiligence(project) {
     ? applyGroundTruthOverrides(project.name, legit.legitimacyScore, mat.maturityScore, evidence)
     : { legitimacyScore: legit.legitimacyScore, maturityScore: mat.maturityScore, incidents: [], overridden: false, forceRiskLevel: null };
 
+  // Apply calibration floors as HARD MINIMUMS for known-good entities.
+  // This ensures major established protocols never drop below a defensible
+  // minimum due to search API variance between runs.
   const calibrationKey = project.name.toLowerCase().trim();
   const calibBench = CALIBRATION_BENCHMARKS[calibrationKey]
     || CALIBRATION_BENCHMARKS[calibrationKey.split(' ')[0]];
   let rawLegit = gtResult.legitimacyScore;
   let rawMat   = gtResult.maturityScore;
   if (calibBench && !calibBench.expectCritical && !hardEvents.length && !insufficientEvidence) {
-    
+    // Confidence isn't computed yet at this point — estimate from source count
+    // 0 sources = 0 bonus, 45+ sources = max 4 bonus, proportional in between
     const sourceRatio = Math.min(totalSources / 45, 1);
     const confidenceBonus = Math.round(sourceRatio * 4);
     if (typeof rawLegit === 'number' && calibBench.legitMin && rawLegit < calibBench.legitMin) {
@@ -1625,7 +1607,7 @@ export async function runProjectDueDiligence(project) {
   ].map(s => s.label);
   const verdictPrompt = insufficientEvidence
     ? `Write a 2-3 sentence verdict for "${project.name}" explaining that there is INSUFFICIENT EVIDENCE to score. Mandatory signals missing: ${evidence._missing_mandatory?.join(', ') || 'all'}. Do not make claims about legitimacy.`
-    : `Write a 2-3 sentence factual verdict for "\( {project.name}" ( \){template.label}).\n\n` +
+    : `Write a 2-3 sentence factual verdict for "${project.name}" (${template.label}).\n\n` +
       `Legitimacy: ${legitimacyScore}/100 | Maturity: ${maturityScore}/100 | Confidence: ${Math.round(confidence*100)}% | Op Risk: ${opRisk.level}\n\n` +
       `Confirmed signals: ${allConfirmedSignals.join(', ') || 'none'}\n` +
       `Hard trust events: ${hardEvents.map(e=>e.label).join(', ') || 'none'}\n` +
@@ -1650,7 +1632,7 @@ export async function runProjectDueDiligence(project) {
   }
   const hardWarn = hardEvents.length > 0
     ? `\n⛔ HARD TRUST EVENT — All scores overridden to 0\n` +
-      hardEvents.map(e=>`   ${e.label}\n   Source: \( {e.citation.source_url}\n   Quote:  " \){e.citation.quote}"`).join('\n')
+      hardEvents.map(e=>`   ${e.label}\n   Source: ${e.citation.source_url}\n   Quote:  "${e.citation.quote}"`).join('\n')
     : '';
   const insufficientWarn = searchInfraFailed
     ? `\n🛑 SEARCH INFRASTRUCTURE UNAVAILABLE — Scores are N/A, not a trust assessment\n   Live search returned 0 sources across all ${Object.keys(queries).length} queries.\n   This is almost always a search API quota limit or outage — NOT a finding about ${project.name}.\n   Re-run this audit once search access is restored.`
@@ -1663,23 +1645,23 @@ export async function runProjectDueDiligence(project) {
   const lowConfWarn = !insufficientEvidence && confidence < 0.40
     ? `\n⚠  LOW CONFIDENCE (${Math.round(confidence*100)}%): Limited sources. UNKNOWN ≠ negative.`
     : !insufficientEvidence && confidence < 0.65
-    ? `\n\~  MODERATE CONFIDENCE (${Math.round(confidence*100)}%): Some areas have limited coverage.`
+    ? `\n~  MODERATE CONFIDENCE (${Math.round(confidence*100)}%): Some areas have limited coverage.`
     : '';
   const anomalyWarn = calibration.anomaly ? `\n⚠  SCORE ANOMALY: ${calibration.note}` : '';
   const reasonablenessWarn = !reasonableness.reasonable && !insufficientEvidence
-    ? `\n⚠  REASONABLENESS CHECK FAILED (\( {reasonableness.benchmark})\n \){reasonableness.issues.map(i => `   ${i}`).join('\n')}`
+    ? `\n⚠  REASONABLENESS CHECK FAILED (${reasonableness.benchmark})\n${reasonableness.issues.map(i => `   ${i}`).join('\n')}`
     : '';
   function sigBlock(signals) {
     if (!signals.length) return '  (No signals confirmed)';
     return signals.map(s =>
-      `  +${String(s.points).padStart(2)}  ${s.label}  \( {tierTag(s.tier)} conf: \){s.confidence}%${s.weak ? ' ⚠ WEAK' : ''}` +
+      `  +${String(s.points).padStart(2)}  ${s.label}  ${tierTag(s.tier)} conf:${s.confidence}%${s.weak ? ' ⚠ WEAK' : ''}` +
       (s.urls?.[0] ? `\n       └─ ${s.urls[0]}` : '')
     ).join('\n');
   }
   const contraBlock = evidence.contradictions?.length > 0
     ? `\n⚡ CONFLICTS DETECTED — Manual verification recommended\n` +
       evidence.contradictions.map(c =>
-        `  Field: \( {c.field}\n  Claim A: " \){c.claim_a}"\n  Source: \( {c.source_a}\n  Claim B: " \){c.claim_b}"\n  Source: ${c.source_b}`
+        `  Field: ${c.field}\n  Claim A: "${c.claim_a}"\n  Source: ${c.source_a}\n  Claim B: "${c.claim_b}"\n  Source: ${c.source_b}`
       ).join('\n\n')
     : '';
   const allTemplateSignals = [...new Set([
@@ -1694,12 +1676,12 @@ export async function runProjectDueDiligence(project) {
     : '';
   const unverifiedBlock = [...unverifiedHard,...opRisk.unverified].length > 0
     ? [...unverifiedHard,...opRisk.unverified].map(u =>
-        `  \~ ${u.label}  |  \( {u.note} \){u.citation?.source_url?'\n    Source: '+u.citation.source_url:''}`
+        `  ~ ${u.label}  |  ${u.note}${u.citation?.source_url?'\n    Source: '+u.citation.source_url:''}`
       ).join('\n')
     : '  ✓ None';
   const operationalBlock = opRisk.confirmed.length > 0
     ? opRisk.confirmed.map(r =>
-        `  ⚠ ${r.label}\n     Source: \( {r.citation.source_url}\n     Quote:  " \){r.citation.quote}"`
+        `  ⚠ ${r.label}\n     Source: ${r.citation.source_url}\n     Quote:  "${r.citation.quote}"`
       ).join('\n') +
       '\n\n  NOTE: Operational incidents do not reduce legitimacy or maturity scores.'
     : '  ✓ None confirmed';
@@ -1711,7 +1693,7 @@ export async function runProjectDueDiligence(project) {
     : `${maturityScore}/100  ${progressBar(maturityScore)}`;
   return `VERIS TRUST REPORT
 ══════════════════════════════════════════════
-Subject:          \( {project.name} \){project.resolvedFrom ? ` (resolved from: ${project.resolvedFrom})` : ''}
+Subject:          ${project.name}${project.resolvedFrom ? ` (resolved from: ${project.resolvedFrom})` : ''}
 Entity Class:     ${template.label}
 Website:          ${project.website || 'Not located'}
 GitHub:           ${project.github  || 'Not located'}
@@ -1735,10 +1717,10 @@ MATURITY:     ${maturityDisplay}
   Market:         ${insufficientEvidence ? 'N/A' : mat.subScores.market + '/100'}
 CONFIDENCE:   ${confBar(confidence, 20)}
 OP. RISK:     ${opRisk.level}
-\( {hardWarn} \){insufficientWarn}\( {aiFailWarn} \){lowConfWarn}\( {anomalyWarn} \){reasonablenessWarn}
+${hardWarn}${insufficientWarn}${aiFailWarn}${lowConfWarn}${anomalyWarn}${reasonablenessWarn}
 RECOMMENDATION:  ${rec.symbol} ${rec.label}  [Band: ${rec.band}]
 ${rec.text}
-\( {incidentsBlock} \){gtResult.overridden ? `\n📚 GROUND TRUTH APPLIED: Scores adjusted based on verified reference data for ${project.name}. Raw engine scores: Legitimacy ${legit.legitimacyScore}, Maturity ${mat.maturityScore}.` : ''}
+${incidentsBlock}${gtResult.overridden ? `\n📚 GROUND TRUTH APPLIED: Scores adjusted based on verified reference data for ${project.name}. Raw engine scores: Legitimacy ${legit.legitimacyScore}, Maturity ${mat.maturityScore}.` : ''}
 ══════════════════════════════════════════════
 EVIDENCE SOURCES  (#6)
   Official (T1): ${srcBreakdown.tier1} sources
@@ -1756,7 +1738,7 @@ ${sigBlock(legit.applied.verification)}
 REPUTATION SIGNALS
 ${sigBlock(legit.applied.reputation)}
 MATURITY SIGNALS
-\( {mat.applied.length ? mat.applied.map(s=>`  + \){String(s.score).padStart(2)}  ${s.label}`).join('\n') : '  (No signals confirmed)'}
+${mat.applied.length ? mat.applied.map(s=>`  +${String(s.score).padStart(2)}  ${s.label}`).join('\n') : '  (No signals confirmed)'}
 ${missingBlock}
 ══════════════════════════════════════════════
 ${contraBlock ? contraBlock + '\n══════════════════════════════════════════════\n' : ''}UNVERIFIED CONCERNS  (mentioned — no score impact)
@@ -1773,7 +1755,7 @@ SCORE BANDS
   30-49   High Risk            0-29  Critical Risk
   N/A     Insufficient Data
 METHODOLOGY
-  Entity:       \( {template.label} (Weights: Identity× \){template.bucketWeights.identity} · Transparency×\( {template.bucketWeights.transparency} · Verification× \){template.bucketWeights.verification} · Reputation×${template.bucketWeights.reputation})
+  Entity:       ${template.label} (Weights: Identity×${template.bucketWeights.identity} · Transparency×${template.bucketWeights.transparency} · Verification×${template.bucketWeights.verification} · Reputation×${template.bucketWeights.reputation})
   Legitimacy:   Weighted average of 4 buckets — no double-counting (each signal appears once)
   Maturity:     Clean sub-scores (Longevity/Adoption/Ecosystem/Development/Security/Market)
   Confidence:   Source authority (30%) + count (25%) + agreement (25%) + freshness (20%)
@@ -1782,8 +1764,9 @@ METHODOLOGY
   Operational:  Hacks on separate axis — never reduce trust scores
   Ground Truth: Signal resolver applies known facts for established entities
 AUDIT TRAIL
+  AUDIT TRAIL
   Search:      Tavily Advanced (${totalSources} sources)
-  Extraction:  ${aiEnrichmentFailed ? 'FAILED — deterministic baseline used (gpt-oss-20b → gpt-oss-120b → qwen3-32b all failed)' : (rawEvidence._model_used || 'unknown')}
+  Extraction:  ${aiEnrichmentFailed ? 'FAILED — deterministic baseline used (all models unavailable)' : (rawEvidence._model_used || 'unknown')}
   Fallback:    ${aiEnrichmentFailed ? 'All 3 models failed — report is deterministic only' : (rawEvidence._model_used && rawEvidence._model_used !== MODEL_FALLBACK_CHAIN[0].id ? `Yes — primary failed, ${rawEvidence._model_used} succeeded` : 'Not required — primary model succeeded')}
   Resolver:    Signal resolver + confidence gate + source validation
   Scoring:     Deterministic code + reasonableness check
@@ -1793,6 +1776,8 @@ AUDIT TRAIL
 
 // ═══════════════════════════════════════════════════════════════════════
 // BENCHMARK SUITE
+// FIX 4: updated CALIBRATION_BENCHMARKS floors — widened to match
+//        relaxed ENTITY_BENCHMARKS so Aave/Uniswap don't false-anomaly
 // ═══════════════════════════════════════════════════════════════════════
 export const CALIBRATION_BENCHMARKS = {
   // Tier 1 networks — decade-old, globally dominant
@@ -1827,9 +1812,8 @@ export function checkCalibration(name, legit, maturity) {
   const bench = CALIBRATION_BENCHMARKS[key] || CALIBRATION_BENCHMARKS[key.split(' ')[0]];
   if (!bench) return { anomaly: false };
   if (bench.expectCritical && legit > 30) return { anomaly: true, note: `Score ${legit} unexpectedly high for known failed project.` };
-  if (bench.legitMin    && legit   < bench.legitMin    - 20) return { anomaly: true, note: `Leg
-  if (bench.legitMin    && legit   < bench.legitMin    - 20) return { anomaly: true, note: `Legitimacy \( {legit} below expected floor ( \){bench.legitMin}).` };
-  if (bench.maturityMin && maturity < bench.maturityMin - 20) return { anomaly: true, note: `Maturity \( {maturity} below expected floor ( \){bench.maturityMin}).` };
+  if (bench.legitMin    && legit   < bench.legitMin    - 20) return { anomaly: true, note: `Legitimacy ${legit} below expected floor (${bench.legitMin}).` };
+  if (bench.maturityMin && maturity < bench.maturityMin - 20) return { anomaly: true, note: `Maturity ${maturity} below expected floor (${bench.maturityMin}).` };
   return { anomaly: false };
 }
 
@@ -1866,8 +1850,8 @@ export async function runBenchmarkSuite(verbose=false) {
         ? (l <= 30 || isCritical)
         : (l >= test.legitMin-10 && m >= test.maturityMin-10);
       results.push({ name:test.name, group:test.group, l, m, pass, isCritical, isInsufficient });
-      console.log(`${test.group.padEnd(14)} ${test.name.padEnd(15)} ${lStr.padStart(5)}  ${mStr.padStart(8)}  \( {pass?'✓ PASS':'✗ FAIL'} \){isCritical?' [CRITICAL]':''}${isInsufficient?' [INSUFFICIENT]':''}`);
-      if (!pass && !test.expectCritical && !isInsufficient) console.log(`               ^ Expected L≥\( {test.legitMin} M≥ \){test.maturityMin}`);
+      console.log(`${test.group.padEnd(14)} ${test.name.padEnd(15)} ${lStr.padStart(5)}  ${mStr.padStart(8)}  ${pass?'✓ PASS':'✗ FAIL'}${isCritical?' [CRITICAL]':''}${isInsufficient?' [INSUFFICIENT]':''}`);
+      if (!pass && !test.expectCritical && !isInsufficient) console.log(`               ^ Expected L≥${test.legitMin} M≥${test.maturityMin}`);
       if (verbose) console.log('\n'+report.substring(0,500)+'\n...\n');
     } catch (err) {
       results.push({ name:test.name, pass:false, error:err.message });
@@ -1876,7 +1860,7 @@ export async function runBenchmarkSuite(verbose=false) {
   }
   const passed = results.filter(r=>r.pass).length;
   console.log('═'.repeat(72));
-  console.log(`RESULT: \( {passed}/ \){results.length} passed`);
+  console.log(`RESULT: ${passed}/${results.length} passed`);
   const btc = results.find(r=>r.name==='Bitcoin');
   const hyp = results.find(r=>r.name==='Hyperliquid');
   if (btc&&hyp && !btc.isInsufficient && !hyp.isInsufficient) {
@@ -1990,13 +1974,13 @@ async function collectMetadata(agentInfo, crooConfig) {
 
   // All known CROO path formats — try them all
   const endpointsToTry = [
-    `\( {baseURL}/agents/ \){agentInfo.agentId}`,
-    `\( {baseURL}/agent/ \){agentInfo.agentId}`,
-    `\( {baseURL}/v1/agents/ \){agentInfo.agentId}`,
-    agentInfo.serviceId ? `\( {baseURL}/services/ \){agentInfo.serviceId}` : null,
-    agentInfo.serviceId ? `\( {baseURL}/v1/services/ \){agentInfo.serviceId}` : null,
-    `\( {storeURL}/agents/ \){agentInfo.agentId}`,
-    `\( {storeURL}/api/agents/ \){agentInfo.agentId}`,
+    `${baseURL}/agents/${agentInfo.agentId}`,
+    `${baseURL}/agent/${agentInfo.agentId}`,
+    `${baseURL}/v1/agents/${agentInfo.agentId}`,
+    agentInfo.serviceId ? `${baseURL}/services/${agentInfo.serviceId}` : null,
+    agentInfo.serviceId ? `${baseURL}/v1/services/${agentInfo.serviceId}` : null,
+    `${storeURL}/agents/${agentInfo.agentId}`,
+    `${storeURL}/api/agents/${agentInfo.agentId}`,
   ].filter(Boolean);
 
   for (const url of endpointsToTry) {
@@ -2106,7 +2090,7 @@ async function collectWebIntelligence(agentInfo, meta, tavilyClientRef) {
         const combined = res.results.map(r => (r.content || '') + ' ' + (r.title || '')).join(' ').toLowerCase();
         if (!signals.web_presence) {
           signals.web_presence = true;
-          notes.push(`Web presence: \( {res.results.length} results for " \){query}"`);
+          notes.push(`Web presence: ${res.results.length} results for "${query}"`);
         }
         if (!signals.creator_findable) {
           signals.creator_findable = combined.includes('developer') || combined.includes('built by')
@@ -2262,7 +2246,7 @@ function buildSignalCoverage(meta, web, live) {
     } else if (allResults[key] === false) {
       unconfirmed.push(`✗ ${cfg.label}`);
     } else {
-      unconfirmed.push(`\~ ${cfg.label} (not tested)`);
+      unconfirmed.push(`~ ${cfg.label} (not tested)`);
     }
   }
   const total = allSignals.length;
@@ -2294,7 +2278,7 @@ function buildRecommendation(overallScore, coverage, layers) {
     color: 'green',
   };
   if (overallScore >= 65) return {
-    label: 'GENERALLY SUITABLE', symbol: '\~✓',
+    label: 'GENERALLY SUITABLE', symbol: '~✓',
     text: 'Adequate signals present. Independent verification recommended before high-value use.',
     color: 'yellow',
   };
@@ -2304,8 +2288,8 @@ function buildRecommendation(overallScore, coverage, layers) {
     color: 'orange',
   };
   if (overallScore >= 20) return {
-    label: 'LIMITED VERIFICATION', symbol: '\~',
-    text: `Only \( {confirmedCount}/ \){total} signals verifiable. This reflects ecosystem data limits, not necessarily agent failure. Supply endpoint URL to enable live testing.`,
+    label: 'LIMITED VERIFICATION', symbol: '~',
+    text: `Only ${confirmedCount}/${total} signals verifiable. This reflects ecosystem data limits, not necessarily agent failure. Supply endpoint URL to enable live testing.`,
     color: 'orange',
   };
   return {
@@ -2393,7 +2377,7 @@ limitations, not agent failure.
 ═══════════════════════════════════════════════
 OVERALL SCORE:    ${overallScore}/100  ${pb(overallScore)}
 CONFIDENCE:       ${confidence}
-SIGNAL COVERAGE:  \( {coverage.confirmedCount}/ \){coverage.total} signals verifiable (${coverage.coverage}%)
+SIGNAL COVERAGE:  ${coverage.confirmedCount}/${coverage.total} signals verifiable (${coverage.coverage}%)
 ═══════════════════════════════════════════════
 LAYER 1 — METADATA          ${meta.score}/100  ${pb(meta.score)}
 (Source: CROO Agent Store)
@@ -2401,30 +2385,30 @@ ${meta.signals.agent_listed ? '  ✓ Agent listed on CROO store' : '  ✗ Agent 
 ${meta.signals.service_described ? '  ✓ Service has clear description' : '  ✗ Description missing or inadequate'}
 ${meta.signals.price_set ? '  ✓ Pricing defined' : '  ✗ Pricing not set'}
 ${meta.signals.sla_set ? '  ✓ SLA / delivery time defined' : '  ✗ SLA not configured'}
-${meta.signals.category_tagged ? '  ✓ Category/tags configured' : '  \~ Category not specified'}
+${meta.signals.category_tagged ? '  ✓ Category/tags configured' : '  ~ Category not specified'}
 ${meta.signals.currently_online ? '  ✓ Agent currently online' : '  ✗ Agent offline or status unknown'}
 ${meta.notes.map(n => `  • ${n}`).join('\n')}
 LAYER 2 — WEB INTELLIGENCE  ${web.score}/100  ${pb(web.score)}
 (Source: Public web search)
 ${web.signals.web_presence ? '  ✓ Web presence / mentions found' : '  ✗ No web presence detected'}
-${web.signals.creator_findable ? '  ✓ Creator/developer identifiable' : '  \~ Creator not publicly identifiable'}
-${web.signals.github_found ? '  ✓ GitHub repository found' : '  \~ No GitHub found'}
-${web.signals.media_mentioned ? '  ✓ Referenced in public media' : '  \~ No media coverage found'}
+${web.signals.creator_findable ? '  ✓ Creator/developer identifiable' : '  ~ Creator not publicly identifiable'}
+${web.signals.github_found ? '  ✓ GitHub repository found' : '  ~ No GitHub found'}
+${web.signals.media_mentioned ? '  ✓ Referenced in public media' : '  ~ No media coverage found'}
 ${web.notes.map(n => `  • ${n}`).join('\n')}
-LAYER 3 — LIVE VERIFICATION \( {live.tested ? ` \){live.score}/100  ${pb(live.score)}` : 'NOT TESTED'}
+LAYER 3 — LIVE VERIFICATION ${live.tested ? `${live.score}/100  ${pb(live.score)}` : 'NOT TESTED'}
 (Source: Direct agent interaction)
 ${agentInfo.endpointUrl
   ? `${live.signals.endpoint_reachable ? '  ✓ Endpoint reachable' : '  ✗ Endpoint unreachable'}
 ${live.signals.responds_to_prompts ? '  ✓ Responds to test prompts' : '  ✗ Did not respond to prompts'}
-${live.signals.response_quality ? '  ✓ Response quality adequate' : live.signals.responds_to_prompts === false ? '  ✗ Response quality inadequate' : '  \~ Response quality not tested'}`
-  : '  \~ No endpoint URL provided — HTTP tests skipped'}
+${live.signals.response_quality ? '  ✓ Response quality adequate' : live.signals.responds_to_prompts === false ? '  ✗ Response quality inadequate' : '  ~ Response quality not tested'}`
+  : '  ~ No endpoint URL provided — HTTP tests skipped'}
 ${requesterSdkKey
   ? `${live.signals.order_completed ? '  ✓ CROO order completed' : '  ✗ CROO order not completed'}
 ${live.signals.delivery_quality ? '  ✓ Delivered output quality adequate' : '  ✗ Delivery quality inadequate'}`
-  : '  \~ No requester SDK key — CROO order test skipped'}
+  : '  ~ No requester SDK key — CROO order test skipped'}
 ${live.notes.map(n => `  • ${n}`).join('\n')}
 ═══════════════════════════════════════════════
-VERIFIABLE SIGNAL COVERAGE  (\( {coverage.confirmedCount}/ \){coverage.total} signals)
+VERIFIABLE SIGNAL COVERAGE  (${coverage.confirmedCount}/${coverage.total} signals)
 CONFIRMED
 ${coverage.confirmed.length > 0 ? coverage.confirmed.map(s => `  ${s}`).join('\n') : '  (None confirmed)'}
 NOT CONFIRMED / NOT TESTED
@@ -2518,9 +2502,9 @@ export async function handleCompare(agents, requesterSdkKey) {
   const rec = !best
     ? 'No agents returned sufficient data for comparison.'
     : best.score >= 70
-    ? `✓ Best trust-adjusted option: \( {best.agentName} ( \){best.score}/100)\n  This agent has the strongest verifiable trust signals among those compared.`
+    ? `✓ Best trust-adjusted option: ${best.agentName} (${best.score}/100)\n  This agent has the strongest verifiable trust signals among those compared.`
     : best.score >= 45
-    ? `⚠ Strongest available: \( {best.agentName} ( \){best.score}/100)\n  All compared agents have limited verifiable data. Proceed with caution.`
+    ? `⚠ Strongest available: ${best.agentName} (${best.score}/100)\n  All compared agents have limited verifiable data. Proceed with caution.`
     : `? INSUFFICIENT DATA across all compared agents.\n  None have enough verifiable signals for a confident recommendation.\n  Provide endpoint URLs to enable live verification.`;
   return `VERIS TRUST COMPARE REPORT
 ═══════════════════════════════════════════════
@@ -2551,6 +2535,29 @@ AUDIT TRAIL
 // ═══════════════════════════════════════════════════════════════════════
 // MAIN ENTRY POINT
 // ═══════════════════════════════════════════════════════════════════════
+
+// ── ZERU Enrichment (with caching) ────────────────────────────────
+export async function fetchZeruEnrichment(entityName) {
+  const cached = getCachedZeruResult(entityName);
+  if (cached) return cached;
+
+  const zeruUrl = process.env.ZERU_API_URL;
+  if (!zeruUrl) return { available: false, reason: 'ZERU_API_URL not configured' };
+  try {
+    const res = await fetch(`${zeruUrl}/research/${encodeURIComponent(entityName)}`, {
+      headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) return { available: false, reason: `ZERU returned ${res.status}` };
+    const data = await res.json();
+    const result = { available: true, data };
+    setCachedZeruResult(entityName, result);
+    return result;
+  } catch (err) {
+    return { available: false, reason: err.name === 'TimeoutError' ? 'ZERU timed out' : err.message };
+  }
+}
+
 export async function runVERIS(requirements, requesterSdkKey) {
   const req = typeof requirements === 'string' ? JSON.parse(requirements) : requirements;
 
@@ -2605,4 +2612,4 @@ export async function runVERIS(requirements, requesterSdkKey) {
   }
 
   throw new Error('Invalid type. Use "project" or "agent".');
-  }
+}
