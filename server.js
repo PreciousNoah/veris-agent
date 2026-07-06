@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import pkg from '@croo-network/sdk';
 const { AgentClient, EventType, DeliverableType } = pkg;
-import { runVERIS, handleCompare, getTrustReceipts, supabase, getCachedZeruResult, setCachedZeruResult, fetchZeruEnrichment } from './veris.js'; 
+import { runVERIS, handleCompare, getTrustReceipts, supabase, getCachedZeruResult, setCachedZeruResult, fetchZeruEnrichment } from './veris.js';
 import fs from 'fs';
 
 const app = express();
@@ -914,30 +914,7 @@ app.get('/a2a/demo/:entityName', requireApiKey, async (req, res) => {
 // A2A ENRICHMENT FUNCTIONS
 // ════════════════════════════════════════════════════════════════════
 
-async function fetchZeruEnrichment(entityName) {
-  // Check cache first
-  const cached = getCachedZeruResult(entityName);
-  if (cached) return cached;
-
-  const zeruUrl = process.env.ZERU_API_URL;
-  if (!zeruUrl) return { available: false, reason: 'ZERU_API_URL not configured' };
-  try {
-    const res = await fetch(
-      `${zeruUrl}/research/${encodeURIComponent(entityName)}`,
-      {
-        headers: { 'X-Api-Key': process.env.ZERU_API_KEY || '' },
-        signal:  AbortSignal.timeout(20000),
-      }
-    );
-    if (!res.ok) return { available: false, reason: `ZERU returned ${res.status}` };
-    const data = await res.json();
-    const result = { available: true, data };
-    setCachedZeruResult(entityName, result);
-    return result;
-  } catch (err) {
-    return { available: false, reason: err.name === 'TimeoutError' ? 'ZERU timed out' : err.message };
-  }
-}
+// fetchZeruEnrichment is imported from veris.js — no local definition needed
 
 async function fetchSentinelDecision(trustScore, confidence, zeruResult, incidents = []) {
   const sentinelUrl = process.env.SENTINEL_API_URL;
@@ -1208,7 +1185,6 @@ async function handleOrder(provider, orderId) {
       if (isProjectCompare) {
         console.log(`  📊 Project Compare (from receipts): ${requirements.agents.map(a => a.agentName).join(' vs ')}`);
         
-        // Look up receipts for each entity — NO fresh audits
         const projectResults = await Promise.all(requirements.agents.map(async (agent) => {
           const name = (agent.agentName || agent.agentId || '').toLowerCase().trim();
           if (!name) return { name: agent.agentName || 'Unknown', score: null, rec: 'Unknown', sigs: { verified: 0, total: 0 }, error: null, isInsufficient: true, note: 'No entity name provided' };
@@ -1222,7 +1198,6 @@ async function handleOrder(provider, orderId) {
             const score = latest.score;
             const sigs = { verified: latest.signals_verified || 0, total: latest.signals_total || 0 };
             
-            // Derive recommendation from score
             let rec = 'Unknown';
             if (score !== null) {
               if (score >= 85) rec = 'STRONGLY TRUSTED';
@@ -1239,7 +1214,6 @@ async function handleOrder(provider, orderId) {
           }
         }));
 
-        // Sort: scored entities first (desc), then insufficient/not-yet-audited, then errors
         const ranked = [...projectResults].sort((a, b) => {
           if (a.error && !b.error) return 1;
           if (!a.error && b.error) return -1;
@@ -1389,7 +1363,6 @@ Auditor: VERIS · CROO v1 · Base Mainnet`;
       }
 
     } else {
-      // ── STANDARD TRUST AUDIT ──────────────────────────────────────
       if (!requirements.type) requirements.type = 'project';
       if (requirements.type === 'project' && !requirements.name) {
         requirements.name = String(rawRequirement || 'Unknown').trim();
