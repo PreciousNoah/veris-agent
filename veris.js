@@ -984,8 +984,11 @@ async function extractEvidence(combinedText, projectName, entityLabel) {
   let response, modelUsed;
   try {
   const result = await groqExtract(prompt);
-  const parsed = JSON.parse(result.content.replace(/```json|```/g, '').trim());
-  parsed._model_used = result.modelUsed;  // ← ADD THIS LINE
+  const cleaned = result.content.replace(/```json|```/g, '').trim();
+  const lastBrace = cleaned.lastIndexOf('}');
+  const jsonStr = lastBrace > 0 ? cleaned.substring(0, lastBrace + 1) : cleaned;
+  const parsed = JSON.parse(jsonStr);
+  parsed._model_used = result.modelUsed;
   return parsed;
   } catch (err) {
     console.error(`  🛑 All fallback models failed for evidence extraction (${projectName}): ${err.message}`);
