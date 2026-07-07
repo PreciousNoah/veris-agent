@@ -1392,7 +1392,7 @@ async function collectEvidence(query, projectName='') {
     const sources = res.results.map(r => ({
       title: r.title, url: r.url,
       tier: classifySourceTier(r.url, projectName),
-      snippet: r.content?.substring(0,500)||'',
+      snippet: (r.content || r.title || '').substring(0, 500),
     }));
     const text = sources.map((s,i) =>
       `[Source ${i+1} | ${s.tier.toUpperCase()} | ${s.url}]\n${s.title}\n${s.snippet}`
