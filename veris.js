@@ -906,7 +906,7 @@ const HARD_TRUST_EVENTS = [
 async function extractEvidence(combinedText, projectName, entityLabel) {
   const prompt =
     `You are a structured evidence extraction engine for "${projectName}" (${entityLabel}).\n\n` +
-    `SOURCES:\n${combinedText.substring(0, 9000)}\n\n` +
+    `SOURCES:\n${combinedText.substring(0, 4000)}\n\n` +
     `RULES:\n` +
     `1. Each boolean field = "YES", "NO", or "UNKNOWN". Default = UNKNOWN.\n` +
     `   YES = source explicitly confirms. NO = source explicitly contradicts. UNKNOWN = not mentioned.\n` +
@@ -1390,12 +1390,12 @@ const SIGNAL_LABELS = {
 // ═══════════════════════════════════════════════════════════════════════
 async function collectEvidence(query, projectName='') {
   try {
-    const res = await tavilyClient.search(query, { searchDepth:'advanced', maxResults:5, includeAnswer:false });
+    const res = await tavilyClient.search(query, { searchDepth:'advanced', maxResults:3, includeAnswer:false }); 
     if (!res.results?.length) return { text:'', sourceCount:0, sources:[] };
     const sources = res.results.map(r => ({
       title: r.title, url: r.url,
       tier: classifySourceTier(r.url, projectName),
-      snippet: (r.content || '').substring(0, 500),
+      snippet: (r.content || r.title || '').substring(0, 200),
     }));
     const text = sources.map((s,i) => {
       const body = s.snippet || s.title; // fall back to title if content is empty
