@@ -1441,7 +1441,7 @@ async function groqExtract(prompt) {
       { role:'system', content:'You are a structured data extraction engine. Return ONLY valid JSON. No markdown, no backticks, no explanation.' },
       { role:'user', content:prompt },
     ],
-    { temperature: 0.0, maxTokens: 3000 }
+    { temperature: 0.0, maxTokens: 5000 }
   );
   if (result.tier !== 'Primary') {
     console.log(`  📊 Inference chain: Primary (gpt-oss-20b) failed → ${result.tier} (${result.modelUsed}) succeeded`);
