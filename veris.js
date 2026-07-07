@@ -1431,6 +1431,7 @@ function buildSearchQueries(project, entityType) {
 }
 
 async function groqExtract(prompt) {
+  console.log(`  → Attempting AI extraction via Groq...`);
   const result = await callModelWithFallback(
     [
       { role:'system', content:'You are a structured data extraction engine. Return ONLY valid JSON. No markdown, no backticks, no explanation.' },
@@ -1515,6 +1516,8 @@ export async function runProjectDueDiligence(project) {
   const entityKey = project.entityType || detectEntityType(project);
   const template  = ENTITY_TEMPLATES[entityKey] || ENTITY_TEMPLATES.general;
   console.log(`  Entity class: ${template.label}`);
+  console.log(`  → Groq API key present: ${!!process.env.GROQ_API_KEY}`);
+  console.log(`  → Groq API key prefix: ${(process.env.GROQ_API_KEY || 'MISSING').substring(0, 8)}...`);
   console.log('  → Collecting evidence...');
   const queries = buildSearchQueries(project, entityKey);
   const searchResults = await Promise.all(
