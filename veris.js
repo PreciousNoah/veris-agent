@@ -1032,16 +1032,6 @@ async function extractEvidence(combinedText, projectName, entityLabel) {
     return baseline;
   }
 
-  try {
-    const parsed = JSON.parse(response.replace(/```json|```/g, '').trim());
-    parsed._model_used = modelUsed;
-    return parsed;
-  } catch {
-    console.warn(`  ⚠ Evidence parse failed (model: ${modelUsed}) — neutral baseline`);
-    return buildBaselineEvidence();
-  }
-}
-
 function buildBaselineEvidence() {
   const fields = Object.keys(LEGITIMACY_SIGNALS)
     .filter(k => !['no_confirmed_fraud','no_confirmed_hack','longevity_10y','longevity_5y','longevity_2y','longevity_1y'].includes(k));
