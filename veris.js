@@ -1031,7 +1031,7 @@ async function extractEvidence(combinedText, projectName, entityLabel) {
     baseline._ai_enrichment_failed = true;
     return baseline;
   }
-
+} 
 function buildBaselineEvidence() {
   const fields = Object.keys(LEGITIMACY_SIGNALS)
     .filter(k => !['no_confirmed_fraud','no_confirmed_hack','longevity_10y','longevity_5y','longevity_2y','longevity_1y'].includes(k));
