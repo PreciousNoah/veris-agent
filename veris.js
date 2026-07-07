@@ -1392,11 +1392,12 @@ async function collectEvidence(query, projectName='') {
     const sources = res.results.map(r => ({
       title: r.title, url: r.url,
       tier: classifySourceTier(r.url, projectName),
-      snippet: (r.content || r.title || '').substring(0, 500),
+      snippet: (r.content || '').substring(0, 500),
     }));
-    const text = sources.map((s,i) =>
-      `[Source ${i+1} | ${s.tier.toUpperCase()} | ${s.url}]\n${s.title}\n${s.snippet}`
-    ).join('\n\n---\n\n');
+    const text = sources.map((s,i) => {
+      const body = s.snippet || s.title; // fall back to title if content is empty
+      return `[Source ${i+1} | ${s.tier.toUpperCase()} | ${s.url}]\n${s.title}\n${body}`;
+    }).join('\n\n---\n\n');
     return { text, sourceCount:sources.length, sources };
   } catch (err) {
     console.warn('  ⚠ Tavily error:', err.message);
