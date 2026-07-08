@@ -1314,10 +1314,15 @@ function computeConfidence(evidence, allSources) {
 // ═══════════════════════════════════════════════════════════════════════
 // RECOMMENDATION ENGINE
 // ═══════════════════════════════════════════════════════════════════════
-function getRecommendation(legitimacyScore, maturityScore, opRiskLevel, hardEventsConfirmed) {
+function getRecommendation(legitimacyScore, maturityScore, opRiskLevel, hardEventsConfirmed, hasOfficialSignals = 0) {
   if (hardEventsConfirmed.length > 0) {
     return { label:'CRITICAL RISK', symbol:'⛔', band:'0-29',
       text:'Hard trust event confirmed (fraud/scam/sanctions). Do not engage.' };
+  }
+  // Prevent CRITICAL RISK when the entity has verified official signals and no fraud/hacks
+  if (legitimacyScore < 30 && hasOfficialSignals >= 3) {
+    return { label:'MIXED SIGNALS', symbol:'~', band:'50-64',
+      text:'Several official signals confirmed but overall evidence is limited. Manual research recommended.' };
   }
   if (legitimacyScore >= 85 && maturityScore >= 70) {
     return { label:'STRONGLY TRUSTED', symbol:'✓✓', band:'90-100',
@@ -1622,7 +1627,7 @@ export async function runProjectDueDiligence(project) {
     : gtResult.forceRiskLevel === 'CRITICAL'
     ? { label: 'CRITICAL RISK', symbol: '⛔', band: '0-29',
         text: `Ground truth confirms this entity has a catastrophic failure history. Do not engage. See incidents below.` }
-    : getRecommendation(legitimacyScore, maturityScore, opRisk.level, hardEvents);
+    : getRecommendation(legitimacyScore, maturityScore, opRisk.level, hardEvents, allConfirmedSignals.length); 
   const reasonableness = insufficientEvidence
     ? { reasonable: true, note: 'Skipped — insufficient evidence' }
     : validateReasonableness(project.name, legitimacyScore, maturityScore);
