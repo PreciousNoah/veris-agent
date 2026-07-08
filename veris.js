@@ -1726,7 +1726,6 @@ const legitimacyDisplay = insufficientEvidence
 const maturityDisplay = insufficientEvidence
   ? 'N/A (Insufficient Evidence)'
   : `${maturityScore}/100  ${progressBar(maturityScore)}`;
-  mat.maturityScore, incidents: [], overridden: false, forceRiskLevel: null };
 
   // Apply calibration floors as HARD MINIMUMS for known-good entities.
   // This ensures major established protocols never drop below a defensible
