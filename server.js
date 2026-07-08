@@ -279,18 +279,19 @@ function buildReasoningBlock(report) {
     lines.push(`  Confidence (${conf}%) — Very low. Minimal evidence. Re-run with a website or GitHub URL for better results.`);
   }
 
+  // FIX 2: Only mention missing signals — never contradict confirmed ones
   const weakDims = dims.filter(d => d.score < 50);
   if (weakDims.length > 0) {
     lines.push('');
     lines.push('  WHY THE SCORE IS NOT HIGHER');
     for (const d of weakDims) {
-      if (d.name === 'Identity') {
+      if (d.name === 'Identity' && !report.includes('Founders publicly named')) {
         lines.push('    → Founders and team could not be publicly identified from available sources.');
-      } else if (d.name === 'Transparency') {
+      } else if (d.name === 'Transparency' && !report.includes('Whitepaper found') && !report.includes('Technical documentation')) {
         lines.push('    → Whitepaper, roadmap, or technical documentation could not be confirmed.');
-      } else if (d.name === 'Verification') {
+      } else if (d.name === 'Verification' && !report.includes('Open source confirmed') && !report.includes('Active GitHub') && !report.includes('Security audit found')) {
         lines.push('    → Open source code, GitHub activity, or security audit could not be verified.');
-      } else if (d.name === 'Reputation') {
+      } else if (d.name === 'Reputation' && !report.includes('Media coverage')) {
         lines.push('    → Project longevity, media coverage, or community signals were insufficient.');
       }
     }
