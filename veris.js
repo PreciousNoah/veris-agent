@@ -1585,7 +1585,124 @@ export async function runProjectDueDiligence(project) {
   // Apply ground truth overrides BEFORE finalising scores
   const gtResult = (!hardEvents.length && !insufficientEvidence)
     ? applyGroundTruthOverrides(project.name, legit.legitimacyScore, mat.maturityScore, evidence)
-    : { legitimacyScore: legit.legitimacyScore, maturityScore: mat.maturityScore, incidents: [], overridden: false, forceRiskLevel: null };
+    : { legitimacyScore: legit.legitimacyScore, maturityScore:const legitimacyScore = hardEvents.length > 0 ? 0
+  : insufficientEvidence ? 'N/A'
+  : rawLegit;
+const maturityScore = hardEvents.length > 0 ? 0
+  : insufficientEvidence ? 'N/A'
+  : rawMat;
+const knownIncidents = gtResult.incidents || [];
+const incidentsBlock = formatIncidentsBlock(knownIncidents);
+const confidence = computeConfidence(evidence, allSources);
+
+const allConfirmedSignals = [
+  ...legit.applied.identity, ...legit.applied.transparency,
+  ...legit.applied.verification, ...legit.applied.reputation,
+].map(s => s.label);
+
+const rec = insufficientEvidence
+  ? { label: 'INSUFFICIENT DATA', symbol: '?', band: 'N/A',
+      text: `Cannot score — all ${evidence._missing_mandatory?.length || ''} mandatory signals for ${template.label} are UNKNOWN. More evidence required.` }
+  : gtResult.forceRiskLevel === 'CRITICAL'
+  ? { label: 'CRITICAL RISK', symbol: '⛔', band: '0-29',
+      text: `Ground truth confirms this entity has a catastrophic failure history. Do not engage. See incidents below.` }
+  : getRecommendation(legitimacyScore, maturityScore, opRisk.level, hardEvents, allConfirmedSignals.length); 
+const reasonableness = insufficientEvidence
+  ? { reasonable: true, note: 'Skipped — insufficient evidence' }
+  : validateReasonableness(project.name, legitimacyScore, maturityScore);
+const calibration = checkCalibration(project.name,
+  typeof legitimacyScore === 'number' ? legitimacyScore : 0,
+  typeof maturityScore === 'number' ? maturityScore : 0
+);
+const srcBreakdown = sourceAuthorityBreakdown(allSources, project.name);
+console.log('  → Generating verdict...');
+const verdictPrompt = insufficientEvidence
+  ? `Write a 2-3 sentence verdict for "${project.name}" explaining that there is INSUFFICIENT EVIDENCE to score. Mandatory signals missing: ${evidence._missing_mandatory?.join(', ') || 'all'}. Do not make claims about legitimacy.`
+  : `Write a 2-3 sentence factual verdict for "${project.name}" (${template.label}).\n\n` +
+    `Legitimacy: ${legitimacyScore}/100 | Maturity: ${maturityScore}/100 | Confidence: ${Math.round(confidence*100)}% | Op Risk: ${opRisk.level}\n\n` +
+    `Confirmed signals: ${allConfirmedSignals.join(', ') || 'none'}\n` +
+    `Hard trust events: ${hardEvents.map(e=>e.label).join(', ') || 'none'}\n` +
+    `Operational risks: ${opRisk.confirmed.map(r=>r.label).join(', ') || 'none'}\n\n` +
+    `Rules: Only use facts listed. Legitimacy ≠ quality. If confidence <50%, note limited evidence.`;
+// FALLBACK CHAIN applies here too. If gpt-oss-20b → gpt-oss-120b → qwen3-32b all
+// fail, fall back to a deterministic (template-based, non-AI) verdict sentence
+// rather than throwing and losing the whole report.
+let verdictText;
+try {
+  verdictText = await groqSynthesize(
+    verdictPrompt,
+    insufficientEvidence
+      ? 'You are a factual research assistant. Acknowledge uncertainty. Do not make claims without evidence.'
+      : 'Write a factual trust audit verdict. Do not add information not listed above. Be direct.'
+  );
+} catch (err) {
+  console.error(`  🛑 All fallback models failed for verdict synthesis (${project.name}): ${err.message}`);
+  verdictText = insufficientEvidence
+    ? `Deterministic fallback (AI enrichment unavailable): insufficient evidence to score ${project.name}. Missing mandatory signals: ${evidence._missing_mandatory?.join(', ') || 'all'}.`
+    : `Deterministic fallback (AI enrichment unavailable — all models failed): Legitimacy ${legitimacyScore}/100, Maturity ${maturityScore}/100, Confidence ${Math.round(confidence*100)}%, Operational risk ${opRisk.level}. Recommendation: ${rec.label}. ${rec.text}`;
+}
+const hardWarn = hardEvents.length > 0
+  ? `\n⛔ HARD TRUST EVENT — All scores overridden to 0\n` +
+    hardEvents.map(e=>`   ${e.label}\n   Source: ${e.citation.source_url}\n   Quote:  "${e.citation.quote}"`).join('\n')
+  : '';
+const insufficientWarn = searchInfraFailed
+  ? `\n🛑 SEARCH INFRASTRUCTURE UNAVAILABLE — Scores are N/A, not a trust assessment\n   Live search returned 0 sources across all ${Object.keys(queries).length} queries.\n   This is almost always a search API quota limit or outage — NOT a finding about ${project.name}.\n   Re-run this audit once search access is restored.`
+  : insufficientEvidence
+  ? `\n⚠  INSUFFICIENT EVIDENCE — Scores are N/A, not 0\n   Missing mandatory signals: ${evidence._missing_mandatory?.join(', ') || 'all'}\n   This does NOT mean the project is illegitimate. It means VERIS cannot verify it.`
+  : '';
+const aiFailWarn = aiEnrichmentFailed
+  ? `\n🛑 AI ENRICHMENT UNAVAILABLE — All fallback models failed (gpt-oss-20b → gpt-oss-120b → qwen3-32b)\n   This report uses deterministic baseline evidence only. Re-run once model access is restored.`
+  : '';
+const lowConfWarn = !insufficientEvidence && confidence < 0.40
+  ? `\n⚠  LOW CONFIDENCE (${Math.round(confidence*100)}%): Limited sources. UNKNOWN ≠ negative.`
+  : !insufficientEvidence && confidence < 0.65
+  ? `\n~  MODERATE CONFIDENCE (${Math.round(confidence*100)}%): Some areas have limited coverage.`
+  : '';
+const anomalyWarn = calibration.anomaly ? `\n⚠  SCORE ANOMALY: ${calibration.note}` : '';
+const reasonablenessWarn = !reasonableness.reasonable && !insufficientEvidence
+  ? `\n⚠  REASONABLENESS CHECK FAILED (${reasonableness.benchmark})\n${reasonableness.issues.map(i => `   ${i}`).join('\n')}`
+  : '';
+function sigBlock(signals) {
+  if (!signals.length) return '  (No signals confirmed)';
+  return signals.map(s =>
+    `  +${String(s.points).padStart(2)}  ${s.label}  ${tierTag(s.tier)} conf:${s.confidence}%${s.weak ? ' ⚠ WEAK' : ''}` +
+    (s.urls?.[0] ? `\n       └─ ${s.urls[0]}` : '')
+  ).join('\n');
+}
+const contraBlock = evidence.contradictions?.length > 0
+  ? `\n⚡ CONFLICTS DETECTED — Manual verification recommended\n` +
+    evidence.contradictions.map(c =>
+      `  Field: ${c.field}\n  Claim A: "${c.claim_a}"\n  Source: ${c.source_a}\n  Claim B: "${c.claim_b}"\n  Source: ${c.source_b}`
+    ).join('\n\n')
+  : '';
+const allTemplateSignals = [...new Set([
+  ...Object.keys(LEGITIMACY_SIGNALS).filter(k =>
+    !['no_confirmed_fraud','no_confirmed_hack','longevity_10y','longevity_5y','longevity_2y','longevity_1y'].includes(k)
+  )
+])];
+const missingSignals = allTemplateSignals.filter(k => (evidence[k]||'UNKNOWN') === 'UNKNOWN');
+const missingBlock = missingSignals.length > 0
+  ? `EVIDENCE NOT LOCATED (${insufficientEvidence ? 'N/A' : 'UNKNOWN'} — no score impact)\n` +
+    missingSignals.map(k => `  ${insufficientEvidence ? 'N/A' : '?'} ${SIGNAL_LABELS[k]||k}`).join('\n')
+  : '';
+const unverifiedBlock = [...unverifiedHard,...opRisk.unverified].length > 0
+  ? [...unverifiedHard,...opRisk.unverified].map(u =>
+      `  ~ ${u.label}  |  ${u.note}${u.citation?.source_url?'\n    Source: '+u.citation.source_url:''}`
+    ).join('\n')
+  : '  ✓ None';
+const operationalBlock = opRisk.confirmed.length > 0
+  ? opRisk.confirmed.map(r =>
+      `  ⚠ ${r.label}\n     Source: ${r.citation.source_url}\n     Quote:  "${r.citation.quote}"`
+    ).join('\n') +
+    '\n\n  NOTE: Operational incidents do not reduce legitimacy or maturity scores.'
+  : '  ✓ None confirmed';
+const legitimacyDisplay = insufficientEvidence
+  ? 'N/A (Insufficient Evidence)'
+  : `${legitimacyScore}/100  ${progressBar(legitimacyScore)}`;
+const maturityDisplay = insufficientEvidence
+  ? 'N/A (Insufficient Evidence)'
+  : `${maturityScore}/100  ${progressBar(maturityScore)}`;
+  mat.maturityScore, incidents: [], overridden: false, forceRiskLevel: null };
 
   // Apply calibration floors as HARD MINIMUMS for known-good entities.
   // This ensures major established protocols never drop below a defensible
@@ -1612,121 +1729,7 @@ export async function runProjectDueDiligence(project) {
     }
   }
 
-  const legitimacyScore = hardEvents.length > 0 ? 0
-    : insufficientEvidence ? 'N/A'
-    : rawLegit;
-  const maturityScore = hardEvents.length > 0 ? 0
-    : insufficientEvidence ? 'N/A'
-    : rawMat;
-  const knownIncidents = gtResult.incidents || [];
-  const incidentsBlock = formatIncidentsBlock(knownIncidents);
-  const confidence = computeConfidence(evidence, allSources);
-  const rec = insufficientEvidence
-    ? { label: 'INSUFFICIENT DATA', symbol: '?', band: 'N/A',
-        text: `Cannot score — all ${evidence._missing_mandatory?.length || ''} mandatory signals for ${template.label} are UNKNOWN. More evidence required.` }
-    : gtResult.forceRiskLevel === 'CRITICAL'
-    ? { label: 'CRITICAL RISK', symbol: '⛔', band: '0-29',
-        text: `Ground truth confirms this entity has a catastrophic failure history. Do not engage. See incidents below.` }
-    : getRecommendation(legitimacyScore, maturityScore, opRisk.level, hardEvents, allConfirmedSignals.length); 
-  const reasonableness = insufficientEvidence
-    ? { reasonable: true, note: 'Skipped — insufficient evidence' }
-    : validateReasonableness(project.name, legitimacyScore, maturityScore);
-  const calibration = checkCalibration(project.name,
-    typeof legitimacyScore === 'number' ? legitimacyScore : 0,
-    typeof maturityScore === 'number' ? maturityScore : 0
-  );
-  const srcBreakdown = sourceAuthorityBreakdown(allSources, project.name);
-  console.log('  → Generating verdict...');
-  const allConfirmedSignals = [
-    ...legit.applied.identity, ...legit.applied.transparency,
-    ...legit.applied.verification, ...legit.applied.reputation,
-  ].map(s => s.label);
-  const verdictPrompt = insufficientEvidence
-    ? `Write a 2-3 sentence verdict for "${project.name}" explaining that there is INSUFFICIENT EVIDENCE to score. Mandatory signals missing: ${evidence._missing_mandatory?.join(', ') || 'all'}. Do not make claims about legitimacy.`
-    : `Write a 2-3 sentence factual verdict for "${project.name}" (${template.label}).\n\n` +
-      `Legitimacy: ${legitimacyScore}/100 | Maturity: ${maturityScore}/100 | Confidence: ${Math.round(confidence*100)}% | Op Risk: ${opRisk.level}\n\n` +
-      `Confirmed signals: ${allConfirmedSignals.join(', ') || 'none'}\n` +
-      `Hard trust events: ${hardEvents.map(e=>e.label).join(', ') || 'none'}\n` +
-      `Operational risks: ${opRisk.confirmed.map(r=>r.label).join(', ') || 'none'}\n\n` +
-      `Rules: Only use facts listed. Legitimacy ≠ quality. If confidence <50%, note limited evidence.`;
-  // FALLBACK CHAIN applies here too. If gpt-oss-20b → gpt-oss-120b → qwen3-32b all
-  // fail, fall back to a deterministic (template-based, non-AI) verdict sentence
-  // rather than throwing and losing the whole report.
-  let verdictText;
-  try {
-    verdictText = await groqSynthesize(
-      verdictPrompt,
-      insufficientEvidence
-        ? 'You are a factual research assistant. Acknowledge uncertainty. Do not make claims without evidence.'
-        : 'Write a factual trust audit verdict. Do not add information not listed above. Be direct.'
-    );
-  } catch (err) {
-    console.error(`  🛑 All fallback models failed for verdict synthesis (${project.name}): ${err.message}`);
-    verdictText = insufficientEvidence
-      ? `Deterministic fallback (AI enrichment unavailable): insufficient evidence to score ${project.name}. Missing mandatory signals: ${evidence._missing_mandatory?.join(', ') || 'all'}.`
-      : `Deterministic fallback (AI enrichment unavailable — all models failed): Legitimacy ${legitimacyScore}/100, Maturity ${maturityScore}/100, Confidence ${Math.round(confidence*100)}%, Operational risk ${opRisk.level}. Recommendation: ${rec.label}. ${rec.text}`;
-  }
-  const hardWarn = hardEvents.length > 0
-    ? `\n⛔ HARD TRUST EVENT — All scores overridden to 0\n` +
-      hardEvents.map(e=>`   ${e.label}\n   Source: ${e.citation.source_url}\n   Quote:  "${e.citation.quote}"`).join('\n')
-    : '';
-  const insufficientWarn = searchInfraFailed
-    ? `\n🛑 SEARCH INFRASTRUCTURE UNAVAILABLE — Scores are N/A, not a trust assessment\n   Live search returned 0 sources across all ${Object.keys(queries).length} queries.\n   This is almost always a search API quota limit or outage — NOT a finding about ${project.name}.\n   Re-run this audit once search access is restored.`
-    : insufficientEvidence
-    ? `\n⚠  INSUFFICIENT EVIDENCE — Scores are N/A, not 0\n   Missing mandatory signals: ${evidence._missing_mandatory?.join(', ') || 'all'}\n   This does NOT mean the project is illegitimate. It means VERIS cannot verify it.`
-    : '';
-  const aiFailWarn = aiEnrichmentFailed
-    ? `\n🛑 AI ENRICHMENT UNAVAILABLE — All fallback models failed (gpt-oss-20b → gpt-oss-120b → qwen3-32b)\n   This report uses deterministic baseline evidence only. Re-run once model access is restored.`
-    : '';
-  const lowConfWarn = !insufficientEvidence && confidence < 0.40
-    ? `\n⚠  LOW CONFIDENCE (${Math.round(confidence*100)}%): Limited sources. UNKNOWN ≠ negative.`
-    : !insufficientEvidence && confidence < 0.65
-    ? `\n~  MODERATE CONFIDENCE (${Math.round(confidence*100)}%): Some areas have limited coverage.`
-    : '';
-  const anomalyWarn = calibration.anomaly ? `\n⚠  SCORE ANOMALY: ${calibration.note}` : '';
-  const reasonablenessWarn = !reasonableness.reasonable && !insufficientEvidence
-    ? `\n⚠  REASONABLENESS CHECK FAILED (${reasonableness.benchmark})\n${reasonableness.issues.map(i => `   ${i}`).join('\n')}`
-    : '';
-  function sigBlock(signals) {
-    if (!signals.length) return '  (No signals confirmed)';
-    return signals.map(s =>
-      `  +${String(s.points).padStart(2)}  ${s.label}  ${tierTag(s.tier)} conf:${s.confidence}%${s.weak ? ' ⚠ WEAK' : ''}` +
-      (s.urls?.[0] ? `\n       └─ ${s.urls[0]}` : '')
-    ).join('\n');
-  }
-  const contraBlock = evidence.contradictions?.length > 0
-    ? `\n⚡ CONFLICTS DETECTED — Manual verification recommended\n` +
-      evidence.contradictions.map(c =>
-        `  Field: ${c.field}\n  Claim A: "${c.claim_a}"\n  Source: ${c.source_a}\n  Claim B: "${c.claim_b}"\n  Source: ${c.source_b}`
-      ).join('\n\n')
-    : '';
-  const allTemplateSignals = [...new Set([
-    ...Object.keys(LEGITIMACY_SIGNALS).filter(k =>
-      !['no_confirmed_fraud','no_confirmed_hack','longevity_10y','longevity_5y','longevity_2y','longevity_1y'].includes(k)
-    )
-  ])];
-  const missingSignals = allTemplateSignals.filter(k => (evidence[k]||'UNKNOWN') === 'UNKNOWN');
-  const missingBlock = missingSignals.length > 0
-    ? `EVIDENCE NOT LOCATED (${insufficientEvidence ? 'N/A' : 'UNKNOWN'} — no score impact)\n` +
-      missingSignals.map(k => `  ${insufficientEvidence ? 'N/A' : '?'} ${SIGNAL_LABELS[k]||k}`).join('\n')
-    : '';
-  const unverifiedBlock = [...unverifiedHard,...opRisk.unverified].length > 0
-    ? [...unverifiedHard,...opRisk.unverified].map(u =>
-        `  ~ ${u.label}  |  ${u.note}${u.citation?.source_url?'\n    Source: '+u.citation.source_url:''}`
-      ).join('\n')
-    : '  ✓ None';
-  const operationalBlock = opRisk.confirmed.length > 0
-    ? opRisk.confirmed.map(r =>
-        `  ⚠ ${r.label}\n     Source: ${r.citation.source_url}\n     Quote:  "${r.citation.quote}"`
-      ).join('\n') +
-      '\n\n  NOTE: Operational incidents do not reduce legitimacy or maturity scores.'
-    : '  ✓ None confirmed';
-  const legitimacyDisplay = insufficientEvidence
-    ? 'N/A (Insufficient Evidence)'
-    : `${legitimacyScore}/100  ${progressBar(legitimacyScore)}`;
-  const maturityDisplay = insufficientEvidence
-    ? 'N/A (Insufficient Evidence)'
-    : `${maturityScore}/100  ${progressBar(maturityScore)}`;
+;
   return `VERIS TRUST REPORT
 ══════════════════════════════════════════════
 Subject:          ${project.name}${project.resolvedFrom ? ` (resolved from: ${project.resolvedFrom})` : ''}
