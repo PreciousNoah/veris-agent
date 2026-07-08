@@ -810,33 +810,33 @@ const TIER_WEIGHTS = { tier1: 1.00, tier2: 0.75, tier3: 0.40, tier4: 0.15 };
 // SIGNAL REGISTRY
 // ═══════════════════════════════════════════════════════════════════════
 const LEGITIMACY_SIGNALS = {
-  founders_named:         { bucket: 'identity',      basePoints: 14 },
-  linkedin_found:         { bucket: 'identity',      basePoints:  8 },
-  team_page:              { bucket: 'identity',      basePoints:  5 },
-  verifiable_history:     { bucket: 'identity',      basePoints:  8 },
-  genuine_engagement:     { bucket: 'identity',      basePoints:  4 },
-  whitepaper:             { bucket: 'transparency',  basePoints: 12 },
-  technical_docs:         { bucket: 'transparency',  basePoints: 10 },
-  roadmap:                { bucket: 'transparency',  basePoints:  7 },
-  tokenomics:             { bucket: 'transparency',  basePoints:  7 },
-  clear_use_case:         { bucket: 'transparency',  basePoints:  6 },
-  on_chain_governance:    { bucket: 'transparency',  basePoints:  5 },
-  treasury_transparency:  { bucket: 'transparency',  basePoints:  5 },
-  active_github:          { bucket: 'verification',  basePoints: 12 },
-  open_source:            { bucket: 'verification',  basePoints: 10 },
-  audit_found:            { bucket: 'verification',  basePoints: 12 },
-  multiple_contributors:  { bucket: 'verification',  basePoints:  6 },
-  live_product:           { bucket: 'verification',  basePoints: 10 },
-  api_usage:              { bucket: 'verification',  basePoints:  6 },
-  multisig_confirmed:     { bucket: 'verification',  basePoints:  6 },
-  funding_confirmed:      { bucket: 'verification',  basePoints:  4 },
-  no_confirmed_fraud:     { bucket: 'reputation',    basePoints: 10 },
-  no_confirmed_hack:      { bucket: 'reputation',    basePoints:  6 },
-  longevity_10y:          { bucket: 'reputation',    basePoints: 14 },
-  longevity_5y:           { bucket: 'reputation',    basePoints: 10 },
-  longevity_2y:           { bucket: 'reputation',    basePoints:  5 },
-  longevity_1y:           { bucket: 'reputation',    basePoints:  3 },
-  media_coverage:         { bucket: 'reputation',    basePoints:  5 },
+  founders_named:         { bucket: 'identity',      basePoints: 20 },
+  linkedin_found:         { bucket: 'identity',      basePoints: 10 },
+  team_page:              { bucket: 'identity',      basePoints: 10 },
+  verifiable_history:     { bucket: 'identity',      basePoints: 12 },
+  genuine_engagement:     { bucket: 'identity',      basePoints:  6 },
+  whitepaper:             { bucket: 'transparency',  basePoints: 18 },
+  technical_docs:         { bucket: 'transparency',  basePoints: 18 },
+  roadmap:                { bucket: 'transparency',  basePoints: 10 },
+  tokenomics:             { bucket: 'transparency',  basePoints: 10 },
+  clear_use_case:         { bucket: 'transparency',  basePoints: 12 },
+  on_chain_governance:    { bucket: 'transparency',  basePoints:  8 },
+  treasury_transparency:  { bucket: 'transparency',  basePoints:  8 },
+  active_github:          { bucket: 'verification',  basePoints: 20 },
+  open_source:            { bucket: 'verification',  basePoints: 20 },
+  audit_found:            { bucket: 'verification',  basePoints: 20 },
+  multiple_contributors:  { bucket: 'verification',  basePoints: 10 },
+  live_product:           { bucket: 'verification',  basePoints: 18 },
+  api_usage:              { bucket: 'verification',  basePoints:  8 },
+  multisig_confirmed:     { bucket: 'verification',  basePoints:  8 },
+  funding_confirmed:      { bucket: 'verification',  basePoints:  6 },
+  no_confirmed_fraud:     { bucket: 'reputation',    basePoints: 15 },
+  no_confirmed_hack:      { bucket: 'reputation',    basePoints: 10 },
+  longevity_10y:          { bucket: 'reputation',    basePoints: 20 },
+  longevity_5y:           { bucket: 'reputation',    basePoints: 15 },
+  longevity_2y:           { bucket: 'reputation',    basePoints:  8 },
+  longevity_1y:           { bucket: 'reputation',    basePoints:  5 },
+  media_coverage:         { bucket: 'reputation',    basePoints:  8 },
 };
 
 const ENTITY_TEMPLATES = {
@@ -1104,10 +1104,21 @@ function computeLegitimacyScore(evidence, template, projectName) {
       weak: isWeak,
     });
   }
-  const scores = {};
+    const scores = {};
   for (const [bk, data] of Object.entries(buckets)) {
     scores[bk] = data.max > 0 ? Math.min(100, Math.round((data.raw / data.max) * 100)) : 0;
   }
+
+  // Unknown dimensions with signals elsewhere shouldn't collapse the score
+  const hasAnySignals = Object.values(applied).some(arr => arr.length > 0);
+  if (hasAnySignals) {
+    for (const bk of Object.keys(scores)) {
+      if (scores[bk] === 0 && applied[bk].length === 0) {
+        scores[bk] = 15;
+      }
+    }
+  }
+
   const bw = template.bucketWeights;
   const legitimacyScore = Math.round(
     scores.identity     * bw.identity +
@@ -1608,12 +1619,6 @@ if (calibBench && !calibBench.expectCritical && !hardEvents.length && !insuffici
   }
 }
 
-const legitimacyScore = hardEvents.length > 0 ? 0
-  : insufficientEvidence ? 'N/A'
-  : rawLegit;
-const maturityScore = hardEvents.length > 0 ? 0
-  : insufficientEvidence ? 'N/A'
-  : rawMat;
 const knownIncidents = gtResult.incidents || [];
 const incidentsBlock = formatIncidentsBlock(knownIncidents);
 const confidence = computeConfidence(evidence, allSources);
@@ -1622,6 +1627,19 @@ const allConfirmedSignals = [
   ...legit.applied.identity, ...legit.applied.transparency,
   ...legit.applied.verification, ...legit.applied.reputation,
 ].map(s => s.label);
+
+let legitimacyScore = hardEvents.length > 0 ? 0
+  : insufficientEvidence ? 'N/A'
+  : rawLegit;
+
+// Floor: if enough official signals exist, score can't collapse
+if (typeof legitimacyScore === 'number' && legitimacyScore < 50 && allConfirmedSignals.length >= 5) {
+  legitimacyScore = 50;
+}
+
+const maturityScore = hardEvents.length > 0 ? 0
+  : insufficientEvidence ? 'N/A'
+  : rawMat;
 
 const rec = insufficientEvidence
   ? { label: 'INSUFFICIENT DATA', symbol: '?', band: 'N/A',
