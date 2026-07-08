@@ -1726,33 +1726,7 @@ const legitimacyDisplay = insufficientEvidence
 const maturityDisplay = insufficientEvidence
   ? 'N/A (Insufficient Evidence)'
   : `${maturityScore}/100  ${progressBar(maturityScore)}`;
-
-  // Apply calibration floors as HARD MINIMUMS for known-good entities.
-  // This ensures major established protocols never drop below a defensible
-  // minimum due to search API variance between runs.
-  const calibrationKey = project.name.toLowerCase().trim();
-  const calibBench = CALIBRATION_BENCHMARKS[calibrationKey]
-    || CALIBRATION_BENCHMARKS[calibrationKey.split(' ')[0]];
-  let rawLegit = gtResult.legitimacyScore;
-  let rawMat   = gtResult.maturityScore;
-  if (calibBench && !calibBench.expectCritical && !hardEvents.length && !insufficientEvidence) {
-    // Confidence isn't computed yet at this point — estimate from source count
-    // 0 sources = 0 bonus, 45+ sources = max 4 bonus, proportional in between
-    const sourceRatio = Math.min(totalSources / 45, 1);
-    const confidenceBonus = Math.round(sourceRatio * 4);
-    if (typeof rawLegit === 'number' && calibBench.legitMin && rawLegit < calibBench.legitMin) {
-      const flooredScore = calibBench.legitMin + confidenceBonus;
-      console.log(`  📊 Calibration floor applied: ${project.name} legitimacy ${rawLegit} → ${flooredScore} (floor ${calibBench.legitMin} + source bonus ${confidenceBonus})`);
-      rawLegit = flooredScore;
-    }
-    if (typeof rawMat === 'number' && calibBench.maturityMin && rawMat < calibBench.maturityMin) {
-      const flooredScore = calibBench.maturityMin + confidenceBonus;
-      console.log(`  📊 Calibration floor applied: ${project.name} maturity ${rawMat} → ${flooredScore} (floor ${calibBench.maturityMin} + source bonus ${confidenceBonus})`);
-      rawMat = flooredScore;
-    }
-  }
-
-;
+  
   return `VERIS TRUST REPORT
 ══════════════════════════════════════════════
 Subject:          ${project.name}${project.resolvedFrom ? ` (resolved from: ${project.resolvedFrom})` : ''}
