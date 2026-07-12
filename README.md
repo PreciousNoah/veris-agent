@@ -49,7 +49,7 @@ Buyer Order (CROO)
 
 | Agent | Role | Deployed |
 |---|---|---|
-| **VERIS** | Trust verification, legitimacy scoring, evidence collection | Railway |
+| **VERIS** | Trust verification, legitimacy scoring, evidence collection | Render |
 | **ZERU** | Market research, risk intelligence, sentiment analysis | Render |
 | **SENTINEL** | Compliance decision engine, recommended actions, review periods | Render |
 
@@ -140,30 +140,6 @@ VERIS demonstrates real agent-to-agent commerce on CROO — not simulated, not m
 ```
 
 This creates a due diligence workflow that no single agent could provide alone. Each agent has a distinct role and cannot be replaced by either of the others.
-
-
-
----
-
-## Screenshots
-
-> Live demo at [veris-site.vercel.app](https://veris-site-rosy.vercel.app/)
-
-### CROO Listing
-![CROO Listing](screenshots/croo-listing.png)
-
-### Audit Page
-![Audit Page](screenshots/audit-page.png)
-
-### Trust Report
-![Trust Report](screenshots/trust-report.png)
-
-### Trust Receipt
-![Trust Receipt](screenshots/trust-receipt.png)
-
-### SENTINEL Verdict
-![SENTINEL Verdict](screenshots/sentinel-verdict.png)
-
 
 ---
 
