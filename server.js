@@ -20,7 +20,7 @@ const config = {
 
 const RENDER_URL = process.env.RENDER_EXTERNAL_URL
   || process.env.RAILWAY_STATIC_URL
-  || 'https://veris-agent-ylrc.onrender.com';
+  || 'https://veris-agent.onrender.com';
 
 let credentials = {};
 try {
