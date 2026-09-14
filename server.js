@@ -22,6 +22,12 @@ const RENDER_URL = process.env.RENDER_EXTERNAL_URL
   || process.env.RAILWAY_STATIC_URL
   || 'https://veris-agent.onrender.com';
 
+// The existing CROO/Base identity is deliberately left untouched.  This is an
+// additional, BSC-scoped ERC-8004 identity for the same VERIS runtime.
+const ERC8004_BSC_WALLET = '0x6df5698866AAeaa56B6cdE076070Ae986779d084';
+const ERC8004_BSC_CHAIN_ID = 56;
+const ERC8004_AGENT_URI = `${RENDER_URL}/.well-known/agent-registration.json`;
+
 let credentials = {};
 try {
   credentials = JSON.parse(fs.readFileSync('veris-credentials.json', 'utf8'));
@@ -398,6 +404,64 @@ app.get('/', (req, res) => {
     protocol: 'CROO v1',
     agentId:  credentials.agentId || null,
   });
+});
+
+// Public discovery metadata for the independently self-custodied BSC identity.
+// These routes are additive: they do not read, alter, or proxy the legacy CROO
+// UUID/Base deployment identity.
+app.get('/.well-known/agent-card.json', (_req, res) => {
+  res.json({
+    name: 'VERIS',
+    description: 'Trust verification and due diligence for projects and agents.',
+    url: RENDER_URL,
+    version: '1.0.0',
+    protocolVersion: '0.3.0',
+    identity: {
+      standard: 'ERC-8004',
+      chainId: ERC8004_BSC_CHAIN_ID,
+      wallet: ERC8004_BSC_WALLET,
+      agentURI: ERC8004_AGENT_URI,
+    },
+    capabilities: { streaming: false },
+    skills: [
+      {
+        id: 'project-due-diligence',
+        name: 'Project due diligence',
+        description: 'Produces evidence-based trust and risk reports for projects.',
+      },
+      {
+        id: 'agent-due-diligence',
+        name: 'Agent due diligence',
+        description: 'Evaluates reachable agent services and available trust signals.',
+      },
+    ],
+  });
+});
+
+app.get('/.well-known/agent-registration.json', (_req, res) => {
+  const agentId = process.env.ERC8004_BSC_AGENT_ID;
+  const registration = {
+    type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+    name: 'VERIS',
+    description: 'Trust verification and due diligence for projects and agents.',
+    image: `${RENDER_URL}/favicon.ico`,
+    services: [
+      { name: 'web', endpoint: RENDER_URL },
+      { name: 'A2A', endpoint: `${RENDER_URL}/.well-known/agent-card.json`, version: '0.3.0' },
+    ],
+    active: true,
+    agentWallet: `eip155:${ERC8004_BSC_CHAIN_ID}:${ERC8004_BSC_WALLET}`,
+  };
+
+  // The registry assigns the agent ID during registration.  Rendering this
+  // optional backlink only after confirmation avoids claiming an unconfirmed ID.
+  if (agentId) {
+    registration.registrations = [{
+      agentId: Number(agentId),
+      agentRegistry: process.env.ERC8004_BSC_REGISTRY || `eip155:${ERC8004_BSC_CHAIN_ID}`,
+    }];
+  }
+  res.json(registration);
 });
 
 // ════════════════════════════════════════════════════════════════════
