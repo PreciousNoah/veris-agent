@@ -439,7 +439,9 @@ app.get('/.well-known/agent-card.json', (_req, res) => {
 });
 
 app.get('/.well-known/agent-registration.json', (_req, res) => {
-  const agentId = process.env.ERC8004_BSC_AGENT_ID;
+  // The confirmed BSC Mainnet registration for this independently owned wallet.
+  // An environment override remains available if the identity is ever migrated.
+  const agentId = process.env.ERC8004_BSC_AGENT_ID || '350048';
   const registration = {
     type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
     name: 'VERIS',
@@ -458,7 +460,8 @@ app.get('/.well-known/agent-registration.json', (_req, res) => {
   if (agentId) {
     registration.registrations = [{
       agentId: Number(agentId),
-      agentRegistry: process.env.ERC8004_BSC_REGISTRY || `eip155:${ERC8004_BSC_CHAIN_ID}`,
+      agentRegistry: process.env.ERC8004_BSC_REGISTRY
+        || `eip155:${ERC8004_BSC_CHAIN_ID}:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`,
     }];
   }
   res.json(registration);
