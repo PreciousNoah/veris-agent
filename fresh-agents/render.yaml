@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: veris-fresh
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node fresh-agents/veris/server.js
